@@ -338,3 +338,188 @@ To guarantee **Eventual Consistency**, a self-healing bootstrap daemon was added
 4. **Collision Avoidance**: If an admin manually clicked "Recalculate Session" exactly while the server was booting, the worker respects the `Set<string>` actively processing tracker to ignore duplicative queue stacking.
 
 This ensures no employee attendance distance metric is ever permanently stranded.
+
+---
+
+## Phase 8 — Expense Module & Architecture Cleanup
+
+### Part 1 — Domain Layer Removal
+
+The `src/domain/` directory contained five empty placeholder folders (`attendance/`, `expense/`, `location/`, `organization/`, `user/`) from the initial scaffold. No code referenced them. They have been permanently deleted.
+
+**Architectural decision:** FieldTrack 2.0 standardizes on a strict **Layered Architecture** (`routes → controller → service → repository`) co-located inside `src/modules/`. DDD-style domain objects are not introduced. This keeps each module self-contained and avoids premature abstraction.
+
+---
+
+### Part 2 — Secured `/internal/metrics`
+
+**Prior state:** `GET /internal/metrics` was completely unauthenticated — any internet client that reached the server could query operational telemetry.
+
+**Fix applied in `src/routes/internal.ts`:**
+
+```typescript
+app.get(
+  "/internal/metrics",
+  {
+    preHandler: [authenticate, requireRole("ADMIN")],
+  },
+  async (_request, reply) => { ... }
+);
+```
+
+- JWT authentication (`authenticate`) runs first — unsigned or expired tokens receive a `401`.
+- Role guard (`requireRole("ADMIN")`) runs second — valid EMPLOYEE tokens receive a `403`.
+- No IP filtering or allowlist — identity is enforced by cryptographic token, not network topology.
+- `EMPLOYEE` role cannot access metrics under any circumstances.
+
+---
+
+### Part 3 — Expense Module
+
+#### Architecture: Route → Controller → Service → Repository
+
+```mermaid
+flowchart LR
+    A["Client"] --> B["expenses.routes.ts"]
+    B -->|"auth + role guard"| C["expenses.controller.ts"]
+    C --> D["expenses.service.ts"]
+    D -->|"business rules"| E["expenses.repository.ts"]
+    E -->|"enforceTenant()"| F["Supabase"]
+```
+
+#### Files Created
+
+| File | Layer | Purpose |
+|------|-------|---------|
+| `expenses.schema.ts` | Types | DB row type, Zod body schemas, pagination schema, response interfaces |
+| `expenses.repository.ts` | Repository | All Supabase queries — SELECT/UPDATE scoped via `enforceTenant()` |
+| `expenses.service.ts` | Service | Business rules, structured event logs (`expense_created`, `expense_approved`, `expense_rejected`) |
+| `expenses.controller.ts` | Controller | Zod validation, service delegation, `{ success, data }` shape |
+| `expenses.routes.ts` | Routes | 4 endpoints with auth middleware, role guards, rate limiting on creation |
+
+#### Database Schema
+
+```sql
+CREATE TABLE expenses (
+  id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id  uuid        NOT NULL,
+  user_id          uuid        NOT NULL,
+  amount           numeric     NOT NULL CHECK (amount > 0),
+  description      text        NOT NULL,
+  status           text        NOT NULL DEFAULT 'PENDING'
+                               CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED')),
+  receipt_url      text,
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  updated_at       timestamptz NOT NULL DEFAULT now()
+);
+```
+
+#### Endpoints
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/expenses` | JWT + EMPLOYEE | Create expense (status forced to `PENDING`). Rate limited: 10/min per user. |
+| `GET` | `/expenses/my` | JWT + EMPLOYEE | Own expenses, paginated (`page`, `limit`) |
+| `GET` | `/admin/expenses` | JWT + ADMIN | All org expenses, paginated |
+| `PATCH` | `/admin/expenses/:id` | JWT + ADMIN | Approve or reject a `PENDING` expense |
+
+#### Business Rules
+
+- **EMPLOYEE can only create and view their own expenses.** The service always sets `status = PENDING` on creation — the body cannot override this.
+- **EMPLOYEE cannot modify an expense after creation.** There is no update endpoint for employees.
+- **ADMIN can view all org expenses** scoped to their organization via `GET /admin/expenses`.
+- **ADMIN can only transition `PENDING` → `APPROVED` or `PENDING` → `REJECTED`.** The service rejects any action on an already-actioned expense with `400 Bad Request`, preventing double-processing.
+- **ADMIN cannot touch other organizations expenses.** All repository calls use `enforceTenant()`, which appends `.eq("organization_id", request.organizationId)`.
+
+#### Zod Validation Rules
+
+| Field | Rule |
+|-------|------|
+| `amount` | Required, `number`, must be `> 0` |
+| `description` | Required, `string`, min 3 chars, max 500 chars |
+| `receipt_url` | Optional, must be a valid URL when provided |
+| `status` (PATCH) | Required, must be `APPROVED` or `REJECTED` |
+| `page` / `limit` | Coerced integers; `page >= 1`, `1 <= limit <= 100` |
+
+#### Tenant Isolation
+
+All SELECT and UPDATE paths pass through `enforceTenant()`:
+
+```typescript
+const baseQuery = supabase.from("expenses").select("*").eq("id", expenseId);
+const { data, error } = await enforceTenant(request, baseQuery).single();
+```
+
+`enforceTenant()` appends `.eq("organization_id", request.organizationId)` before the terminal operation. INSERTs explicitly set `organization_id: request.organizationId` — no `enforceTenant()` needed for writes. This pattern is consistent across all modules.
+
+#### Structured Log Events
+
+| Event tag | Trigger | Fields logged |
+|-----------|---------|---------------|
+| `expense_created` | Successful `POST /expenses` | `expenseId`, `userId`, `organizationId`, `amount` |
+| `expense_approved` | `PATCH` with `status: APPROVED` | `expenseId`, `userId`, `adminId`, `organizationId`, `amount`, `status` |
+| `expense_rejected` | `PATCH` with `status: REJECTED` | `expenseId`, `userId`, `adminId`, `organizationId`, `amount`, `status` |
+
+#### Rate Limiting
+
+`POST /expenses` is rate-limited at 10 requests per 60 seconds per user identity. The `keyGenerator` decodes the JWT `sub` directly from the `Authorization` header (same pattern as `attendance.routes.ts` and `locations.routes.ts`) so the limit is per-identity, not per-IP. Key format: `expense-create:<sub>`.
+
+#### Index Strategy
+
+```sql
+-- 1) Fast employee self-service read (most common path)
+CREATE INDEX idx_expenses_user_created_at
+  ON expenses(user_id, created_at DESC);
+
+-- 2) Admin org-wide paginated listing, newest-first
+CREATE INDEX idx_expenses_org_created_at
+  ON expenses(organization_id, created_at DESC);
+
+-- 3) Analytics and status-based filtering per org
+CREATE INDEX idx_expenses_org_status
+  ON expenses(organization_id, status);
+```
+
+#### Example curl Requests
+
+```bash
+# Create an expense (EMPLOYEE)
+curl -X POST http://localhost:3000/expenses \
+  -H "Authorization: Bearer <EMPLOYEE_JWT>" \
+  -H "Content-Type: application/json" \
+  -d '{"amount": 49.99, "description": "Taxi to client site", "receipt_url": "https://cdn.example.com/receipt.jpg"}'
+
+# View own expenses (EMPLOYEE, paginated)
+curl "http://localhost:3000/expenses/my?page=1&limit=20" \
+  -H "Authorization: Bearer <EMPLOYEE_JWT>"
+
+# View all org expenses (ADMIN)
+curl "http://localhost:3000/admin/expenses?page=1&limit=50" \
+  -H "Authorization: Bearer <ADMIN_JWT>"
+
+# Approve an expense (ADMIN)
+curl -X PATCH "http://localhost:3000/admin/expenses/<EXPENSE_UUID>" \
+  -H "Authorization: Bearer <ADMIN_JWT>" \
+  -H "Content-Type: application/json" \
+  -d '{"status": "APPROVED"}'
+
+# Reject an expense (ADMIN)
+curl -X PATCH "http://localhost:3000/admin/expenses/<EXPENSE_UUID>" \
+  -H "Authorization: Bearer <ADMIN_JWT>" \
+  -H "Content-Type: application/json" \
+  -d '{"status": "REJECTED"}'
+
+# Query secured metrics (ADMIN only — was previously public)
+curl http://localhost:3000/internal/metrics \
+  -H "Authorization: Bearer <ADMIN_JWT>"
+```
+
+### Verification Results
+
+| Check | Result |
+|-------|--------|
+| `npx tsc --noEmit` | Zero errors |
+| Domain layer (`src/domain/`) removed | Confirmed — no remaining imports |
+| `/internal/metrics` secured | `authenticate` + `requireRole("ADMIN")` applied |
+| Expense module files | 5 files created in `src/modules/expenses/` |
+| Routes registered in `routes/index.ts` | `expensesRoutes` registered |
