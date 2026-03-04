@@ -8,22 +8,27 @@ import fastifyRateLimit from "@fastify/rate-limit";
 import { startDistanceWorker } from "./workers/queue.js";
 
 export async function buildApp(): Promise<FastifyInstance> {
-    const app = Fastify({
-        logger: getLoggerConfig(env.NODE_ENV),
-    });
+  const app = Fastify({
+    logger: getLoggerConfig(env.NODE_ENV),
+  });
 
-    // Register plugins
-    await app.register(fastifyRateLimit, {
-        global: false, // We will apply it specifically where needed
-    });
-    await registerJwt(app);
+  // Register plugins
+  await app.register(fastifyRateLimit, {
+    global: false, // Applied selectively per-route
+  });
+  await registerJwt(app);
 
-    // Register routes
-    await registerRoutes(app);
+  // Register routes
+  await registerRoutes(app);
 
-    // Bootstrap Phase 7 Background Workers
-    // We explicitly do NOT await this because it's a perpetual infinite loop
-    startDistanceWorker(app);
+  // Bootstrap Phase 7 Background Worker.
+  // Explicitly NOT awaited — this is a perpetual infinite loop that must
+  // run alongside the HTTP server, not block app construction.
+  startDistanceWorker(app);
 
-    return app;
+  // NOTE: performStartupRecovery is intentionally NOT called here.
+  // It must run AFTER app.listen() resolves in server.ts so it never
+  // prevents the server from accepting traffic during the recovery scan.
+
+  return app;
 }
