@@ -11,7 +11,7 @@ GREEN_PORT=3002
 APP_PORT=3000
 
 ENV_FILE="/home/ashish/FieldTrack-2.0/backend/.env"
-NGINX_CONF="/etc/nginx/sites-enabled/fieldtrack.conf"
+NGINX_CONF="/etc/nginx/sites-enabled/fieldtrack"
 
 MAX_HEALTH_ATTEMPTS=20
 HEALTH_INTERVAL=3
