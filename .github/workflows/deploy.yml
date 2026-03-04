@@ -27,7 +27,9 @@ jobs:
 
       - name: Build Docker image
         run: |
-          docker build -t ghcr.io/rajashish147/fieldtrack-backend:latest .
+          docker build \
+            -t ghcr.io/rajashish147/fieldtrack-backend:latest \
+            ./backend
 
       - name: Push Docker image
         run: |
