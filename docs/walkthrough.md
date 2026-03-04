@@ -1231,3 +1231,146 @@ When `GITHUB_SHA` is absent (local dev, manual deploy), the value is `"manual"`.
 | `curl` available in image | `apk add --no-cache curl` in production stage |
 | Boot log marker | `{ version: GITHUB_SHA \| "manual" }` logged after listen |
 | `host: "0.0.0.0"` binding | Confirmed unchanged — container accessible from outside |
+
+
+---
+
+## Phase 12 — Prometheus Metrics Instrumentation
+
+### Overview
+
+Phase 12 adds a standard Prometheus scrape endpoint to FieldTrack 2.0. This is a pure observability addition — no business logic, no auth, no changes to existing routes. The existing `/internal/metrics` JSON endpoint is untouched.
+
+---
+
+### 12.1 — Why Prometheus
+
+The existing `GET /internal/metrics` endpoint returns a custom JSON snapshot of application-level counters (queue depth, recalculation timings). It is useful for human operators but cannot be scraped by Prometheus, Grafana, Datadog Agent, or any standard monitoring stack.
+
+Prometheus exposition format is the de-facto standard for time-series metrics collection. Adding it enables:
+
+- **Node.js runtime visibility** — CPU usage, heap size, event-loop lag, GC duration, libuv handle counts — out of the box with zero instrumentation code
+- **Grafana dashboards** — plug-and-play with the standard Node.js dashboard (ID 11159)
+- **Alerting** — heap threshold alerts, event-loop saturation alerts without custom code
+- **Cloud-native compatibility** — works with Prometheus Operator on Kubernetes, AWS Managed Prometheus, Grafana Cloud
+
+---
+
+### 12.2 — Implementation
+
+#### Dependency
+
+```
+prom-client  (v15+)
+```
+
+`prom-client` is the official Prometheus client for Node.js. It includes `collectDefaultMetrics()` which automatically instruments the following using native Node.js APIs:
+
+| Metric | Source |
+|--------|--------|
+| `process_cpu_seconds_total` | `process.cpuUsage()` |
+| `process_resident_memory_bytes` | `process.memoryUsage().rss` |
+| `nodejs_heap_size_total_bytes` | V8 heap stats |
+| `nodejs_heap_size_used_bytes` | V8 heap stats |
+| `nodejs_external_memory_bytes` | V8 heap stats |
+| `nodejs_eventloop_lag_seconds` | `perf_hooks` |
+| `nodejs_gc_duration_seconds` | `PerformanceObserver` (GC) |
+| `nodejs_active_handles_total` | `process._getActiveHandles()` |
+| `nodejs_active_requests_total` | `process._getActiveRequests()` |
+
+#### Plugin File — `src/plugins/prometheus.ts`
+
+```typescript
+import type { FastifyPluginAsync } from "fastify";
+import client from "prom-client";
+
+// Isolated registry — avoids polluting the global prom-client default registry
+// in case other libraries also use prom-client internally.
+const register = new client.Registry();
+
+// Default Node.js metrics: CPU usage, heap, event-loop lag, GC, libuv handles.
+client.collectDefaultMetrics({ register });
+
+const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
+  fastify.get("/metrics", async (_request, reply) => {
+    // Prometheus exposition format — no auth required (scraped internally).
+    await reply
+      .header("Content-Type", register.contentType)
+      .send(await register.metrics());
+  });
+};
+
+export default prometheusPlugin;
+```
+
+**Design decisions:**
+
+- **Isolated registry** — `new client.Registry()` instead of `client.register` (the global singleton). Prevents metric registration conflicts if any transitive dependency also uses `prom-client`.
+- **No auth** — Prometheus scrapers cannot present JWTs. The endpoint is intended to be scraped from within the same private network / VPC, not exposed to the public internet. Access control is enforced at the infrastructure layer (VPC security groups, Nginx allow-list, Kubernetes `NetworkPolicy`).
+- **`async reply.send(await register.metrics())`** — `register.metrics()` is async (returns a `Promise<string>`); awaiting it before `send` ensures the full payload is ready.
+
+#### Registration in `src/app.ts`
+
+```typescript
+import prometheusPlugin from "./plugins/prometheus.js";
+
+// Registered before registerJwt() so the route sits outside the auth scope
+await app.register(prometheusPlugin);
+```
+
+Placement before `registerJwt` is intentional — it ensures the `/metrics` route is never accidentally caught by the JWT `preHandler` if route-level auth were ever applied globally.
+
+---
+
+### 12.3 — Endpoint Comparison
+
+| | `GET /metrics` | `GET /internal/metrics` |
+|-|----------------|-------------------------|
+| Format | Prometheus text (exposition) | Custom JSON |
+| Auth | None | JWT + ADMIN |
+| Consumer | Prometheus scraper, Grafana Agent | Human operator, internal dashboards |
+| Content-Type | `text/plain; version=0.0.4` | `application/json` |
+| Data | Node.js runtime stats (CPU, heap, GC, event loop) | App-level counters (queue depth, recalculation timings) |
+| Phase introduced | Phase 12 | Phase 8 |
+
+---
+
+### Files Changed
+
+| File | Action |
+|------|--------|
+| `src/plugins/prometheus.ts` | **NEW** — prom-client registry, `collectDefaultMetrics`, `/metrics` route |
+| `src/app.ts` | **MODIFIED** — import + `await app.register(prometheusPlugin)` |
+| `package.json` | **MODIFIED** — `prom-client` added to dependencies |
+
+---
+
+### Example Output
+
+```
+# HELP process_cpu_user_seconds_total Total user CPU time spent in seconds.
+# TYPE process_cpu_user_seconds_total counter
+process_cpu_user_seconds_total 0.234
+
+# HELP nodejs_heap_size_used_bytes Process heap size used from Node.js in bytes.
+# TYPE nodejs_heap_size_used_bytes gauge
+nodejs_heap_size_used_bytes 24756224
+
+# HELP nodejs_eventloop_lag_seconds Lag of event loop in seconds.
+# TYPE nodejs_eventloop_lag_seconds gauge
+nodejs_eventloop_lag_seconds 0.000312
+```
+
+---
+
+### Verification Results
+
+| Check | Result |
+|-------|--------|
+| `npx tsc --noEmit` | ✅ Zero errors |
+| `GET /metrics` responds | Prometheus exposition text |
+| `Content-Type` header | `text/plain; version=0.0.4` |
+| No auth on `/metrics` | Route registered before JWT plugin |
+| `GET /internal/metrics` unchanged | Still requires JWT + ADMIN |
+| Default metrics collected | CPU, heap, GC, event-loop lag, handles |
+| Isolated registry | `new client.Registry()` — not the global singleton |

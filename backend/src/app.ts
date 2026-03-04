@@ -11,6 +11,7 @@ import fastifyCompress from "@fastify/compress";
 import fastifyCors from "@fastify/cors";
 import { startDistanceWorker } from "./workers/distance.worker.js";
 import { AppError } from "./utils/errors.js";
+import prometheusPlugin from "./plugins/prometheus.js";
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -67,6 +68,10 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(fastifyRateLimit, {
     global: false, // Applied selectively per-route
   });
+
+  // Prometheus metrics — unauthenticated GET /metrics (scrape endpoint)
+  await app.register(prometheusPlugin);
+
   await registerJwt(app);
 
   // Register routes
