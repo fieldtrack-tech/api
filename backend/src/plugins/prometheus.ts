@@ -53,7 +53,6 @@ const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
 
     const route =
       request.routeOptions?.url ||
-      request.routerPath ||
       request.raw.url ||
       "unknown";
 
@@ -65,14 +64,14 @@ const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
     httpRequestsTotal.inc({
       method: request.method,
       route,
-      status_code: String(reply.statusCode)
+      status_code: String(reply.statusCode),
     });
 
     httpRequestDuration.observe(
       {
         method: request.method,
         route,
-        status_code: String(reply.statusCode)
+        status_code: String(reply.statusCode),
       },
       duration
     );
