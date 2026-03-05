@@ -44,11 +44,15 @@ const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
     const diff = process.hrtime(request.startTime);
     const duration = diff[0] + diff[1] / 1e9;
 
-    const route =
+    let route =
       (request as any).routerPath ??
       request.routeOptions?.url ??
       request.raw.url?.split("?")[0] ??
       "unknown";
+
+    if (route.startsWith("/smart-wire/")) {
+      route = "/smart-wire/:slug";
+    }
 
     if (route === "/metrics") {
       httpRequestsInFlight.dec();
