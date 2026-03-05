@@ -4,7 +4,6 @@ import client from "prom-client";
 declare module "fastify" {
   interface FastifyRequest {
     startTime?: [number, number];
-    routerPath?: string;
   }
 }
 
@@ -33,11 +32,17 @@ const httpRequestDuration = new client.Histogram({
   registers: [register],
 });
 
+const httpRequestsInFlight = new client.Gauge({
+  name: "http_requests_in_flight",
+  help: "Current number of in-flight HTTP requests",
+  registers: [register],
+});
+
 const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
   // Start a high-resolution timer on every incoming request.
-  fastify.addHook("onRequest", (request, _reply, done) => {
+  fastify.addHook("onRequest", async (request) => {
     request.startTime = process.hrtime();
-    done();
+    httpRequestsInFlight.inc();
   });
 
   // On send: compute elapsed time, record histogram + counter.
@@ -49,9 +54,9 @@ const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
     const duration = diff[0] + diff[1] / 1e9;
 
     const route =
-      request.routeOptions?.url ||
-      request.routerPath ||
-      request.raw.url ||
+      request.routeOptions?.url ??
+      (request as { routerPath?: string }).routerPath ??
+      request.raw.url ??
       "unknown";
 
     if (route === "/metrics") return;
@@ -72,11 +77,20 @@ const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
     );
   });
 
+  // Decrement in-flight counter after response is sent.
+  fastify.addHook("onResponse", async () => {
+    httpRequestsInFlight.dec();
+  });
+
+  // Decrement in-flight counter on error to prevent gauge leaks.
+  fastify.addHook("onError", async () => {
+    httpRequestsInFlight.dec();
+  });
+
   // Prometheus scrape endpoint — unauthenticated, internal scraping only.
   fastify.get("/metrics", async (_request, reply) => {
-    await reply
-      .header("Content-Type", register.contentType)
-      .send(await register.metrics());
+    reply.header("Content-Type", register.contentType);
+    return register.metrics();
   });
 };
 
