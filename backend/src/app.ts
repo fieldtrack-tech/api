@@ -53,7 +53,9 @@ export async function buildApp(): Promise<FastifyInstance> {
       span.setAttribute("http.method", request.method);
       span.setAttribute("http.client_ip", request.ip);
       span.setAttribute("request.id", String(request.id));
-      span.setAttribute("server.address", request.hostname);
+      if (request.hostname) {
+        span.setAttribute("server.address", request.hostname);
+      }
     }
   });
 
