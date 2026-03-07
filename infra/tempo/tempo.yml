@@ -9,15 +9,21 @@ distributor:
         grpc:
 
 metrics_generator:
-  processor:
-    service_graphs: {}
   storage:
     path: /tmp/tempo/generator/wal
+
+  processor:
+    service_graphs: {}
+    span_metrics: {}
+
   registry:
     external_labels:
       source: tempo
-  remote_write:
-    - url: http://prometheus:9090/api/v1/write
+
+  traces_storage:
+    path: /tmp/tempo/generator/traces
+
+  metrics_ingestion_time_range_slack: 30s
 
 storage:
   trace:
