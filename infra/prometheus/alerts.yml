@@ -1,48 +1,124 @@
 groups:
-  - name: fieldtrack-backend-alerts
-    rules:
 
-      - alert: BackendDown
-        expr: sum(up{job=~"fieldtrack-backend.*"}) == 0
-        for: 1m
-        labels:
-          severity: critical
-        annotations:
-          summary: "Backend unavailable"
-          description: "All FieldTrack backend instances are down."
+# ---------------------------------------------------------
+# API HEALTH
+# ---------------------------------------------------------
 
-      - alert: HighAPIErrorRate
-        expr: rate(http_requests_total{status_code=~"5.."}[5m]) > 0.05
-        for: 2m
-        labels:
-          severity: warning
-        annotations:
-          summary: "High API error rate"
-          description: "More than 5% of requests are failing."
+- name: fieldtrack_api_alerts
+  rules:
 
-      - alert: HighAPILatency
-        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 1
-        for: 2m
-        labels:
-          severity: warning
-        annotations:
-          summary: "High API latency"
-          description: "p95 latency above 1 second."
+  - alert: FieldTrackHighErrorRate
+    expr: |
+      sum(rate(http_requests_total{job=~"fieldtrack-backend.*",status_code=~"5.."}[5m]))
+      /
+      sum(rate(http_requests_total{job=~"fieldtrack-backend.*"}[5m]))
+      > 0.05
+    for: 2m
+    labels:
+      severity: critical
+    annotations:
+      summary: "High API error rate"
+      description: "5xx errors exceed 5%"
 
-      - alert: HighMemoryUsage
-        expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.1
-        for: 2m
-        labels:
-          severity: warning
-        annotations:
-          summary: "High memory usage"
-          description: "System memory usage above 90%."
+  - alert: FieldTrackHighLatency
+    expr: |
+      histogram_quantile(
+        0.95,
+        sum(rate(http_request_duration_seconds_bucket{job=~"fieldtrack-backend.*"}[5m])) by (le)
+      ) > 1
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High API latency"
+      description: "p95 latency above 1 second"
 
-      - alert: DiskAlmostFull
-        expr: (node_filesystem_size_bytes{mountpoint="/"} - node_filesystem_free_bytes{mountpoint="/"}) / node_filesystem_size_bytes{mountpoint="/"} > 0.9
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Disk almost full"
-          description: "Root filesystem usage above 90%."
+# ---------------------------------------------------------
+# WORKER ALERTS
+# ---------------------------------------------------------
+
+- name: fieldtrack_worker_alerts
+  rules:
+
+  - alert: WorkerStoppedProcessing
+    expr: rate(distance_worker_jobs_total[5m]) == 0
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Worker stopped processing jobs"
+
+  - alert: QueueBacklogGrowing
+    expr: bullmq_queue_waiting_jobs > 500
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Queue backlog high"
+
+# ---------------------------------------------------------
+# REDIS ALERTS
+# ---------------------------------------------------------
+
+- name: fieldtrack_redis_alerts
+  rules:
+
+  - alert: RedisHighLatency
+    expr: |
+      histogram_quantile(
+        0.95,
+        sum(rate(redis_command_duration_seconds_bucket[5m])) by (le)
+      ) > 0.05
+    for: 2m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Redis latency high"
+
+  - alert: RedisMemoryHigh
+    expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.8
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Redis memory usage above 80%"
+
+# ---------------------------------------------------------
+# HOST ALERTS
+# ---------------------------------------------------------
+
+- name: fieldtrack_host_alerts
+  rules:
+
+  - alert: HostHighCPU
+    expr: 100 * (1 - avg(rate(node_cpu_seconds_total{mode="idle"}[5m]))) > 85
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High CPU usage"
+
+  - alert: HostMemoryPressure
+    expr: |
+      (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes)
+      /
+      node_memory_MemTotal_bytes
+      > 0.85
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High memory usage"
+
+  - alert: DiskAlmostFull
+    expr: |
+      (node_filesystem_size_bytes{mountpoint="/"} -
+      node_filesystem_free_bytes{mountpoint="/"})
+      /
+      node_filesystem_size_bytes{mountpoint="/"}
+      > 0.85
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Disk usage above 85%"
