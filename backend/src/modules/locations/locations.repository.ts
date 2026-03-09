@@ -1,5 +1,5 @@
 import { supabaseAnonClient as supabase } from "../../config/supabase.js";
-import { enforceTenant } from "../../utils/tenant.js";
+import { enforceTenant, type TenantContext } from "../../utils/tenant.js";
 import { applyPagination } from "../../utils/pagination.js";
 import type { FastifyRequest } from "fastify";
 import type { LocationRecord, CreateLocationBody } from "./locations.schema.js";
@@ -96,7 +96,7 @@ export const locationsRepository = {
     },
 
     async findPointsForDistancePaginated(
-        request: FastifyRequest,
+        context: TenantContext | FastifyRequest,
         sessionId: string,
         page: number,
         limit: number,
@@ -108,7 +108,7 @@ export const locationsRepository = {
             .order("recorded_at", { ascending: true });
 
         const { data, error } = await applyPagination(
-            enforceTenant(request, baseQuery),
+            enforceTenant(context, baseQuery),
             page,
             limit,
         );

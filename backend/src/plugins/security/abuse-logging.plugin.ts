@@ -38,7 +38,7 @@ const abuseLoggingPlugin: FastifyPluginAsync = async (fastify: FastifyInstance) 
         if (reply.statusCode !== 429) return;
 
         const route =
-            (request as any).routerPath ??
+            request.routerPath ??
             request.routeOptions?.url ??
             request.raw.url?.split("?")[0] ??
             "unknown";

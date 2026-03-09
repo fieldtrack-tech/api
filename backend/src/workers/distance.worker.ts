@@ -6,6 +6,7 @@ import { redisConnectionOptions } from "../config/redis.js";
 import { enqueueDistanceJob } from "./distance.queue.js";
 import { sessionSummaryService } from "../modules/session_summary/session_summary.service.js";
 import { metrics } from "../utils/metrics.js";
+import { env } from "../config/env.js";
 
 // ─── Job Payload Shape ────────────────────────────────────────────────────────
 
@@ -91,14 +92,17 @@ export function startDistanceWorker(app: FastifyInstance): Worker | null {
         }
       });
     },
-    { connection: redisConnectionOptions, concurrency: 1 },
+    { connection: redisConnectionOptions, concurrency: env.WORKER_CONCURRENCY },
   );
 
   worker.on("error", (err: Error) => {
-    app.log.error({ error: err.message }, "Distance worker: uncaught worker error");
+    app.log.error({ err }, "Distance worker: uncaught worker error");
   });
 
-  app.log.info("Phase 10: BullMQ distance worker started");
+  app.log.info(
+    { concurrency: env.WORKER_CONCURRENCY },
+    "Phase 10: BullMQ distance worker started",
+  );
 
   return worker;
 }

@@ -6,6 +6,14 @@ import type { GpsLocation } from "../../types/db.js";
 //
 // organization_id is included for direct enforceTenant() filtering,
 // avoiding a JOIN to attendance_sessions on every location query.
+//
+// Phase 18 Note: sequence_number is nullable by design during mobile app
+// stabilization. All queries use ORDER BY recorded_at as the primary ordering,
+// ensuring distance calculations remain correct regardless of sequence_number.
+//
+// Future Migration (post-mobile stabilization):
+//   ALTER TABLE gps_locations ALTER COLUMN sequence_number SET NOT NULL;
+//   ALTER TABLE gps_locations ADD CONSTRAINT check_sequence_positive CHECK (sequence_number > 0);
 
 export type LocationRecord = GpsLocation;
 

@@ -8,6 +8,7 @@ import { metrics } from "../../utils/metrics.js";
 import { env } from "../../config/env.js";
 import { supabaseServiceClient as supabase } from "../../config/supabase.js";
 import type { RecalculateResponse } from "./session_summary.schema.js";
+import type { TenantContext } from "../../utils/tenant.js";
 import { performance } from "perf_hooks";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
@@ -25,19 +26,6 @@ const CHUNK_SIZE = 1000;
 // ─── Shared Streaming Core ─────────────────────────────────────────────────────
 
 /**
- * Minimal context the streaming engine needs.
- * Avoids coupling the internal worker path to a full FastifyRequest.
- *
- * Both the HTTP handler path and the background worker path satisfy this shape —
- * the HTTP path passes a real FastifyRequest (which has both fields), the worker
- * path passes a shaped object cast to FastifyRequest only where the repository
- * signatures require it.
- */
-interface StreamingContext {
-  organizationId: string;
-}
-
-/**
  * Streams all GPS points for a session in CHUNK_SIZE pages, accumulates the
  * Haversine distance, and yields the event loop every YIELD_EVERY_N_PAIRS
  * synchronous iterations so in-flight HTTP requests are never starved.
@@ -45,18 +33,18 @@ interface StreamingContext {
  * Memory complexity: O(1) — only one chunk lives in memory at a time.
  * The last point of each chunk is carried forward to bridge chunk boundaries.
  *
+ * Phase 18: Uses TenantContext interface for type-safe tenant isolation
+ * without requiring a full FastifyRequest.
+ *
  * @returns  { totalDistanceMeters, totalPoints }
  * @throws   BadRequestError when the session exceeds MAX_POINTS_PER_SESSION
  */
 async function streamAndCalculateDistance(
-  ctx: StreamingContext,
+  ctx: TenantContext,
   sessionId: string,
 ): Promise<{ totalDistanceMeters: number; totalPoints: number }> {
-  // Build a minimal request-shaped object that satisfies enforceTenant().
-  // enforceTenant() only accesses request.organizationId — no other fields are used.
-  // The cast is explicit and intentional; narrower than `as any`.
-  const scopedRequest = ctx as unknown as FastifyRequest;
-
+  // Phase 18: enforceTenant() now accepts TenantContext directly.
+  // No unsafe cast required — type-safe tenant isolation.
   let totalDistanceMeters = 0;
   let totalPoints = 0;
   let page = 1;
@@ -74,7 +62,7 @@ async function streamAndCalculateDistance(
   while (hasMore) {
     const pointsChunk =
       await locationsRepository.findPointsForDistancePaginated(
-        scopedRequest,
+        ctx,
         sessionId,
         page,
         CHUNK_SIZE,

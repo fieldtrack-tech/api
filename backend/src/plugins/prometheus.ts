@@ -79,7 +79,7 @@ const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
     const duration = diff[0] + diff[1] / 1e9;
 
     let route =
-      (request as any).routerPath ??
+      request.routerPath ??
       request.routeOptions?.url ??
       request.raw.url?.split("?")[0] ??
       "unknown";

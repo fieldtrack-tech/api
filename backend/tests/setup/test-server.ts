@@ -1,0 +1,82 @@
+/**
+ * test-server.ts — lightweight Fastify instance for integration tests.
+ *
+ * Registers:
+ *  - @fastify/jwt (using the test secret from env)
+ *  - global error handler (mirrors app.ts)
+ *  - all application routes
+ *
+ * Intentionally skips: helmet, CORS, rate-limiting, BullMQ workers,
+ * and Prometheus registration so tests are fast and externally isolated.
+ *
+ * Module mocks (vi.mock) in each test file replace repository/queue
+ * imports before this module is loaded, so the mocks are active when
+ * registerRoutes() triggers the full import chain.
+ */
+import Fastify from "fastify";
+import type { FastifyInstance } from "fastify";
+import fastifyJwt from "@fastify/jwt";
+import { registerRoutes } from "../../src/routes/index.js";
+import { AppError } from "../../src/utils/errors.js";
+
+// ─── Shared test identity constants ──────────────────────────────────────────
+
+// UUIDs must satisfy Zod v4's stricter RFC-4122 regex:
+// 3rd group starts with [1-8] (version), 4th group starts with [89abAB] (variant).
+export const TEST_ORG_ID = "11111111-1111-4111-8111-111111111111";
+/** A second organisation used in cross-tenant isolation tests. */
+export const TEST_ORG_ID_B = "22222222-2222-4222-8222-222222222222";
+export const TEST_EMPLOYEE_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+export const TEST_ADMIN_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+export const TEST_SESSION_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+
+// ─── App factory ─────────────────────────────────────────────────────────────
+
+export async function buildTestApp(): Promise<FastifyInstance> {
+  const app = Fastify({ logger: false });
+
+  // JWT — must match the secret used when signing test tokens
+  await app.register(fastifyJwt, {
+    secret: process.env["SUPABASE_JWT_SECRET"] ?? "test-secret",
+  });
+
+  // Mirror the production error handler from app.ts so integration tests
+  // see the same { success, error, requestId } shape on errors.
+  app.setErrorHandler((error, request, reply) => {
+    if (error instanceof AppError) {
+      void reply.status(error.statusCode).send({
+        success: false,
+        error: error.message,
+        requestId: request.id,
+      });
+      return;
+    }
+    void reply.status(500).send({
+      success: false,
+      error: "Internal server error",
+      requestId: request.id,
+    });
+  });
+
+  await registerRoutes(app);
+  await app.ready();
+  return app;
+}
+
+// ─── Token helpers ────────────────────────────────────────────────────────────
+
+export function signEmployeeToken(
+  app: FastifyInstance,
+  userId = TEST_EMPLOYEE_ID,
+  orgId = TEST_ORG_ID,
+): string {
+  return app.jwt.sign({ sub: userId, role: "EMPLOYEE", organization_id: orgId });
+}
+
+export function signAdminToken(
+  app: FastifyInstance,
+  userId = TEST_ADMIN_ID,
+  orgId = TEST_ORG_ID,
+): string {
+  return app.jwt.sign({ sub: userId, role: "ADMIN", organization_id: orgId });
+}

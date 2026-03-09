@@ -14,10 +14,17 @@ interface DebugRedisResponse {
  * this call produces a downstream span and creates the
  * fieldtrack-backend → redis edge in the Tempo service graph.
  *
- * The route is intentionally unauthenticated so it can be exercised from curl
- * or a monitoring probe without a JWT. It returns no sensitive data.
+ * Phase 18: Restricted to development/staging environments only.
+ * In production, this endpoint is disabled to prevent infrastructure
+ * information disclosure.
  */
 export async function debugRoutes(app: FastifyInstance): Promise<void> {
+  // Only register debug routes in non-production environments
+  if (process.env["NODE_ENV"] === "production") {
+    app.log.info("Debug routes disabled in production");
+    return;
+  }
+
   app.get<{ Reply: DebugRedisResponse }>(
     "/debug/redis",
     async (request, reply): Promise<void> => {
@@ -31,8 +38,7 @@ export async function debugRoutes(app: FastifyInstance): Promise<void> {
         request.log.info({ redis: pong }, "debug/redis ping succeeded");
         void reply.status(200).send({ status: "ok", redis: pong });
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        request.log.error({ error: message }, "debug/redis ping failed");
+        request.log.error({ err: error }, "debug/redis ping failed");
         void reply.status(503).send({ status: "error", redis: "unreachable" });
       }
     },

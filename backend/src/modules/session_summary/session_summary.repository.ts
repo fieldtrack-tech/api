@@ -1,5 +1,5 @@
 import { supabaseServiceClient as supabase } from "../../config/supabase.js";
-import { enforceTenant } from "../../utils/tenant.js";
+import { enforceTenant, type TenantContext } from "../../utils/tenant.js";
 import type { FastifyRequest } from "fastify";
 import type { SessionSummary } from "./session_summary.schema.js";
 
@@ -15,7 +15,7 @@ import type { SessionSummary } from "./session_summary.schema.js";
  */
 export const sessionSummaryRepository = {
     async upsertSummary(
-        _request: FastifyRequest,
+        _context: TenantContext | FastifyRequest,
         summary: Omit<SessionSummary, "computed_at">,
     ): Promise<SessionSummary> {
         const computed_at = new Date().toISOString();

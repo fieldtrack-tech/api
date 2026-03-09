@@ -17,6 +17,8 @@ interface EnvConfig {
   MAX_QUEUE_DEPTH: number;
   MAX_POINTS_PER_SESSION: number;
   MAX_SESSION_DURATION_HOURS: number;
+  // Phase 18: Worker concurrency
+  WORKER_CONCURRENCY: number;
 }
 
 function getEnvVar(key: string): string {
@@ -67,4 +69,8 @@ export const env: EnvConfig = {
   // Sessions longer than this many hours are considered data-integrity anomalies
   // and are rejected from recalculation (e.g. an un-closed dev session).
   MAX_SESSION_DURATION_HOURS: getOptionalInt("MAX_SESSION_DURATION_HOURS", 168),
+
+  // Phase 18: Number of concurrent jobs the distance worker processes.
+  // Default 1 ensures sequential processing. Increase for horizontal scaling.
+  WORKER_CONCURRENCY: getOptionalInt("WORKER_CONCURRENCY", 1),
 };
