@@ -13,6 +13,12 @@ export async function attendanceRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     "/attendance/check-in",
     {
+      schema: {
+        tags: ["attendance"],
+        summary: "Check in to start attendance session",
+        description: "Creates a new attendance session for the authenticated user",
+        security: [{ BearerAuth: [] }],
+      },
       preHandler: [authenticate],
     },
     attendanceController.checkIn,
@@ -22,6 +28,12 @@ export async function attendanceRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     "/attendance/check-out",
     {
+      schema: {
+        tags: ["attendance"],
+        summary: "Check out to end attendance session",
+        description: "Closes the active attendance session for the authenticated user",
+        security: [{ BearerAuth: [] }],
+      },
       preHandler: [authenticate],
     },
     attendanceController.checkOut,
@@ -35,6 +47,12 @@ export async function attendanceRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Params: { sessionId: string } }>(
     "/attendance/:sessionId/recalculate",
     {
+      schema: {
+        tags: ["attendance"],
+        summary: "Recalculate session distance and duration",
+        description: "Manually triggers recalculation of distance and duration for a specific session",
+        security: [{ BearerAuth: [] }],
+      },
       config: {
         rateLimit: {
           max: 5,
@@ -75,6 +93,12 @@ export async function attendanceRoutes(app: FastifyInstance): Promise<void> {
   app.get(
     "/attendance/my-sessions",
     {
+      schema: {
+        tags: ["attendance"],
+        summary: "Get my attendance sessions",
+        description: "Retrieves paginated list of the authenticated user's attendance sessions",
+        security: [{ BearerAuth: [] }],
+      },
       preHandler: [authenticate],
     },
     attendanceController.getMySessions,
@@ -84,6 +108,12 @@ export async function attendanceRoutes(app: FastifyInstance): Promise<void> {
   app.get(
     "/attendance/org-sessions",
     {
+      schema: {
+        tags: ["admin", "attendance"],
+        summary: "Get all organization attendance sessions",
+        description: "Retrieves paginated list of all attendance sessions in the organization (ADMIN only)",
+        security: [{ BearerAuth: [] }],
+      },
       preHandler: [authenticate, requireRole("ADMIN")],
     },
     attendanceController.getOrgSessions,

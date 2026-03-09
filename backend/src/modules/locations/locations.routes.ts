@@ -8,6 +8,12 @@ import { locationsController } from "./locations.controller.js";
  */
 export async function locationsRoutes(app: FastifyInstance): Promise<void> {
     const rateLimitConfig = {
+        schema: {
+            tags: ["locations"],
+            summary: "Record GPS location",
+            description: "Ingests a single GPS location point for the authenticated user's active session",
+            security: [{ BearerAuth: [] }],
+        },
         config: {
             rateLimit: {
                 max: 10,
@@ -37,10 +43,25 @@ export async function locationsRoutes(app: FastifyInstance): Promise<void> {
     app.post("/locations", rateLimitConfig, locationsController.recordLocation);
 
     // Bulk ingest locations — EMPLOYEE only
-    app.post("/locations/batch", rateLimitConfig, locationsController.recordLocationBatch);
+    app.post("/locations/batch", {
+        schema: {
+            tags: ["locations"],
+            summary: "Record multiple GPS locations",
+            description: "Ingests multiple GPS location points in bulk for the authenticated user's active session",
+            security: [{ BearerAuth: [] }],
+        },
+        config: rateLimitConfig.config,
+        preHandler: rateLimitConfig.preHandler,
+    }, locationsController.recordLocationBatch);
 
     // Retrieve route — specific session history (EMPLOYEE)
     app.get("/locations/my-route", {
+        schema: {
+            tags: ["locations"],
+            summary: "Get my route history",
+            description: "Retrieves GPS location history for a specific session of the authenticated user",
+            security: [{ BearerAuth: [] }],
+        },
         preHandler: [authenticate, requireRole("EMPLOYEE")],
     }, locationsController.getRoute);
 }

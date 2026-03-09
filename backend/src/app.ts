@@ -15,6 +15,8 @@ import helmetPlugin from "./plugins/security/helmet.plugin.js";
 import corsPlugin from "./plugins/security/cors.plugin.js";
 import rateLimitPlugin from "./plugins/security/ratelimit.plugin.js";
 import abuseLoggingPlugin from "./plugins/security/abuse-logging.plugin.js";
+// Phase 19: OpenAPI documentation
+import openApiPlugin from "./plugins/openapi.plugin.js";
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -105,6 +107,10 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(prometheusPlugin);
 
   await registerJwt(app);
+
+  // Phase 19: OpenAPI documentation plugin — must be registered before routes
+  // so that route schemas are properly captured in the OpenAPI specification
+  await app.register(openApiPlugin);
 
   // Register routes
   await registerRoutes(app);
