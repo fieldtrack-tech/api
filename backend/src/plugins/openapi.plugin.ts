@@ -8,7 +8,6 @@ import {
   validatorCompiler,
 } from "fastify-type-provider-zod";
 import { z } from "zod";
-import { env } from "../config/env.js";
 
 /**
  * OpenAPI plugin for FieldTrack API.
