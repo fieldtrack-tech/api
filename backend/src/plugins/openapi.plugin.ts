@@ -89,7 +89,8 @@ async function openApiPlugin(app: FastifyInstance): Promise<void> {
           name: "FieldTrack Support",
         },
         license: {
-          name: "Proprietary",
+          name: "MIT",
+          url: "https://github.com/rajashish147/FieldTrack-2.0/blob/master/LICENSE",
         },
       },
       servers: [
