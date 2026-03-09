@@ -95,12 +95,8 @@ async function openApiPlugin(app: FastifyInstance): Promise<void> {
       },
       servers: [
         {
-          url:
-            env.NODE_ENV === "production"
-              ? "https://api.fieldtrack.app"
-              : "http://localhost:4000",
-          description:
-            env.NODE_ENV === "production" ? "Production Server" : "Development Server",
+          url: "/",
+          description: "Current server",
         },
       ],
       tags: [
