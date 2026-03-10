@@ -72,13 +72,21 @@ docker run -d \
 
 echo "[4/7] Waiting for health check..."
 
+# Give the server a moment to boot
+sleep 5
+
 ATTEMPT=0
 
-until curl --max-time 2 -fs "http://127.0.0.1:$INACTIVE_PORT/health" >/dev/null; do
+until curl --max-time 2 -fs "http://127.0.0.1:$INACTIVE_PORT/health" >/dev/null 2>&1; do
     ATTEMPT=$((ATTEMPT+1))
 
     if [ "$ATTEMPT" -ge "$MAX_HEALTH_ATTEMPTS" ]; then
         echo "Health check failed after $MAX_HEALTH_ATTEMPTS attempts."
+
+        echo "===== Container logs ($INACTIVE_NAME) ====="
+        docker logs "$INACTIVE_NAME" --tail 50 || true
+        echo "==========================================="
+
         echo "Rolling back — removing failed container..."
         docker rm -f "$INACTIVE_NAME" || true
         exit 1
@@ -87,6 +95,8 @@ until curl --max-time 2 -fs "http://127.0.0.1:$INACTIVE_PORT/health" >/dev/null;
     echo "  Attempt $ATTEMPT/$MAX_HEALTH_ATTEMPTS — waiting ${HEALTH_INTERVAL}s..."
     sleep "$HEALTH_INTERVAL"
 done
+
+echo "Health check passed."
 
 echo "[5/7] Switching nginx upstream..."
 
