@@ -10,19 +10,16 @@
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { getNodeAutoInstrumentations } from "@opentelemetry/auto-instrumentations-node";
-import { Resource } from "@opentelemetry/resources";
-import {
-    SEMRESATTRS_SERVICE_NAME,
-    SEMRESATTRS_SERVICE_VERSION,
-    SEMRESATTRS_DEPLOYMENT_ENVIRONMENT,
-} from "@opentelemetry/semantic-conventions";
+import { resourceFromAttributes } from "@opentelemetry/resources";
 import { AlwaysOnSampler } from "@opentelemetry/sdk-trace-base";
 
 const sdk = new NodeSDK({
-    resource: new Resource({
-        [SEMRESATTRS_SERVICE_NAME]: "fieldtrack-backend",
-        [SEMRESATTRS_SERVICE_VERSION]: "2.0",
-        [SEMRESATTRS_DEPLOYMENT_ENVIRONMENT]: process.env["NODE_ENV"] ?? "development",
+    resource: resourceFromAttributes({
+        // Use stable string literals to avoid breakage when
+        // @opentelemetry/semantic-conventions renames constants.
+        "service.name": "fieldtrack-backend",
+        "service.version": "2.0",
+        "deployment.environment": process.env["NODE_ENV"] ?? "development",
     }),
 
     // Export every trace. For a single-instance production app this is fine;

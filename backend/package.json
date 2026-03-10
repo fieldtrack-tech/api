@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "FieldTrack 2.0 Backend API",
   "main": "dist/server.js",
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
@@ -23,15 +26,17 @@
     "@fastify/swagger": "^9.7.0",
     "@fastify/swagger-ui": "^5.2.5",
     "@opentelemetry/api": "^1.9.0",
-    "@opentelemetry/auto-instrumentations-node": "^0.55.0",
-    "@opentelemetry/exporter-trace-otlp-http": "^0.57.0",
-    "@opentelemetry/sdk-node": "^0.57.0",
-    "@scalar/fastify-api-reference": "^1.48.1",
-    "@supabase/supabase-js": "^2.98.0",
+    "@opentelemetry/auto-instrumentations-node": "^0.71.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.213.0",
+    "@opentelemetry/resources": "^2.0.0",
+    "@opentelemetry/sdk-node": "^0.213.0",
+    "@opentelemetry/sdk-trace-base": "^2.0.0",
+    "@scalar/fastify-api-reference": "^1.48.2",
+    "@supabase/supabase-js": "^2.99.0",
     "@types/jsonwebtoken": "^9.0.10",
-    "bullmq": "^5.70.1",
+    "bullmq": "^5.70.4",
     "dotenv": "^17.3.1",
-    "fastify": "^5.7.4",
+    "fastify": "^5.8.2",
     "fastify-plugin": "^5.1.0",
     "fastify-type-provider-zod": "^6.1.0",
     "ioredis": "^5.10.0",
@@ -42,7 +47,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@types/node": "^25.3.3",
+    "@types/node": "^25.4.0",
     "@vitest/coverage-v8": "^4.0.18",
     "pino-pretty": "^13.1.3",
     "tsx": "^4.21.0",
