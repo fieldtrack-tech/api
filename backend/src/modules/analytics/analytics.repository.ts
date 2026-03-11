@@ -3,7 +3,6 @@ import { enforceTenant } from "../../utils/tenant.js";
 import type { FastifyRequest } from "fastify";
 import type {
   MinimalSessionRow,
-  MinimalSummaryRow,
   MinimalExpenseRow,
 } from "./analytics.schema.js";
 
@@ -112,44 +111,7 @@ export const analyticsRepository = {
     return (data ?? []).length > 0;
   },
 
-  // ─── Summary Helpers ──────────────────────────────────────────────────────
-
-  /**
-   * Fetch pre-computed session summary rows for a given list of session IDs.
-   *
-   * Phase 15.5: column names corrected to Phase 16 schema:
-   *   total_distance_meters → total_distance_km
-   *   duration_seconds      → total_duration_seconds
-   *
-   * Note: session_summaries does NOT have an organization_id column in the
-   * Phase 16 schema. enforceTenant() is therefore NOT applied here — tenant
-   * isolation is guaranteed by the caller resolving session IDs through an
-   * org-scoped attendance_sessions query first.
-   *
-   * Relies on index: session_summaries(session_id)
-   */
-  async getSummariesForSessions(
-    request: FastifyRequest,
-    sessionIds: string[],
-  ): Promise<MinimalSummaryRow[]> {
-    if (sessionIds.length === 0) return [];
-
-    // session_summaries has organization_id in Phase 16 schema — enforceTenant
-    // provides defense-in-depth even though session IDs are already org-scoped.
-    const baseQuery = supabase
-      .from("session_summaries")
-      .select("session_id, organization_id, total_distance_km, total_duration_seconds")
-      .in("session_id", sessionIds);
-
-    const { data, error } = await enforceTenant(request, baseQuery);
-
-    if (error) {
-      throw new Error(`Analytics: failed to fetch session summaries: ${error.message}`);
-    }
-    return (data ?? []) as MinimalSummaryRow[];
-  },
-
-  // ─── Expense Helpers ──────────────────────────────────────────────────────
+  // ── Expense Helpers ──────────────────────────────────────────────────────
 
   /**
    * Fetch minimal expense rows (amount + status only) for the org within the

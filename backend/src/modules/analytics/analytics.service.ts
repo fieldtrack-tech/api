@@ -70,8 +70,8 @@ export const analyticsService = {
    * Org-wide summary for a given date range.
    *
    * Strategy:
-   *  1. Resolve session IDs + user IDs from attendance_sessions (date-filtered, org-scoped).
-   *  2. Fetch pre-computed totals from session_summaries for those IDs.
+   *  1. Resolve sessions from attendance_sessions within the date range (org-scoped).
+   *  2. Aggregate pre-computed distance/duration directly from attendance_sessions rows.
    *  3. Aggregate expenses within the same date range.
    *  4. All aggregation happens in application memory — rows are minimal and bounded.
    */
@@ -231,14 +231,13 @@ export const analyticsService = {
    * Top performers — ranked by distance, duration, or session count.
    *
    * Strategy:
-   *  1. Resolve session IDs from attendance_sessions in the date range.
-   *  2. Fetch session_summaries for those IDs (one pre-computed row per session).
-   *  3. Group by user_id in application memory and aggregate chosen metric.
-   *  4. Sort descending, slice to limit.
+   *  1. Resolve sessions from attendance_sessions in the date range (org-scoped).
+   *  2. Group by employee_id in application memory, summing pre-computed metrics.
+   *  3. Sort descending by the chosen metric.
+   *  4. Slice to limit.
    *
-   * session_summaries eliminates raw GPS scans — fetching 10k summary rows (one
-   * per session, ~3 small numeric columns) is orders of magnitude cheaper than
-   * scanning the locations table.
+   * Aggregates directly from attendance_sessions.total_distance_km /
+   * total_duration_seconds — no GPS data scanned, no join to session_summaries.
    */
   async getTopPerformers(
     request: FastifyRequest,

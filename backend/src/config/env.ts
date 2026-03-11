@@ -19,6 +19,9 @@ interface EnvConfig {
   MAX_SESSION_DURATION_HOURS: number;
   // Phase 18: Worker concurrency
   WORKER_CONCURRENCY: number;
+  // Prometheus scrape token — when set, /metrics requires X-Metrics-Token header.
+  // Leave unset in development/test to keep the endpoint open.
+  METRICS_SCRAPE_TOKEN: string | undefined;
 }
 
 function getEnvVar(key: string): string {
@@ -73,4 +76,8 @@ export const env: EnvConfig = {
   // Phase 18: Number of concurrent jobs the distance worker processes.
   // Default 1 ensures sequential processing. Increase for horizontal scaling.
   WORKER_CONCURRENCY: getOptionalInt("WORKER_CONCURRENCY", 1),
+
+  // Prometheus scrape protection.  Set this in production and configure the
+  // same value in Prometheus scrape_configs as a custom request_header.
+  METRICS_SCRAPE_TOKEN: process.env["METRICS_SCRAPE_TOKEN"] || undefined,
 };

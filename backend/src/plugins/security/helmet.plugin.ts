@@ -14,9 +14,15 @@ import fastifyHelmet from "@fastify/helmet";
 
 const helmetPlugin: FastifyPluginAsync = async (fastify: FastifyInstance) => {
     await fastify.register(fastifyHelmet, {
-        // Disable Content-Security-Policy — will be enabled in a future phase
-        // once frontend asset origins are fully enumerated.
-        contentSecurityPolicy: false,
+        contentSecurityPolicy: {
+            directives: {
+                defaultSrc: ["'self'"],
+                scriptSrc: ["'self'"],
+                // 'unsafe-inline' required for Swagger UI inline styles
+                styleSrc: ["'self'", "'unsafe-inline'"],
+                imgSrc: ["'self'", "data:"],
+            },
+        },
     });
 
     fastify.log.info("security-helmet plugin registered");

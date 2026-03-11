@@ -32,7 +32,7 @@ export async function internalRoutes(app: FastifyInstance): Promise<void> {
   app.get(
     "/internal/metrics",
     {
-      preHandler: [authenticate, requireRole("ADMIN")],
+      preValidation: [authenticate, requireRole("ADMIN")],
     },
     async (_request, reply): Promise<void> => {
       const queueDepth = await getQueueDepth();

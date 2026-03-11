@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { AttendanceSession, SessionSummaryRow, Expense } from "../../types/db.js";
+import type { AttendanceSession, Expense } from "../../types/db.js";
 
 // ─── Query Parameter Schemas ──────────────────────────────────────────────────
 
@@ -42,14 +42,6 @@ export type UserSummaryQuery = z.infer<typeof userSummaryQuerySchema>;
 export type TopPerformersQuery = z.infer<typeof topPerformersQuerySchema>;
 
 // ─── Internal Repository Row Types ───────────────────────────────────────────
-
-/**
- * Minimal row shape fetched from session_summaries.
- * Only the fields needed for aggregation are selected — never select("*").
- */
-export type MinimalSummaryRow = Pick<SessionSummaryRow,
-  "session_id" | "total_distance_km" | "total_duration_seconds"
->;
 
 /**
  * Minimal row shape fetched from attendance_sessions.

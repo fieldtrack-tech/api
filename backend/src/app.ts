@@ -122,10 +122,14 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // ─── Existing Plugins ───────────────────────────────────────────────────────
 
-  // Prometheus metrics — unauthenticated GET /metrics (scrape endpoint)
+  // Prometheus metrics — GET /metrics (token-protected in production)
   await app.register(prometheusPlugin);
 
-  await registerJwt(app);
+  // @fastify/jwt is only needed in test mode (HS256 test tokens).
+  // Production uses JWKS/ES256 verification in auth.ts via verifySupabaseToken().
+  if (env.NODE_ENV === "test") {
+    await registerJwt(app);
+  }
 
   // Phase 19: OpenAPI documentation plugin — must be registered before routes
   // so that route schemas are properly captured in the OpenAPI specification

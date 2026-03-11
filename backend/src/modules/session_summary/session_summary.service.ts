@@ -208,18 +208,30 @@ export const sessionSummaryService = {
       );
 
     const executionTimeMs = Math.round(performance.now() - startTime);
+    const totalDistanceKm = Math.round(totalDistanceMeters / 10) / 100; // convert m → km
 
     // 4. Persist summary (upsert — idempotent on session_id)
     await sessionSummaryRepository.upsertSummary(request, {
       organization_id: session.organization_id,
       session_id: session.id,
-      total_distance_km: Math.round(totalDistanceMeters / 10) / 100, // convert m → km
+      total_distance_km: totalDistanceKm,
       total_duration_seconds: durationSeconds,
       avg_speed_kmh:
         durationSeconds > 0
           ? Math.round((totalDistanceMeters / 1000 / (durationSeconds / 3600)) * 100) / 100
           : 0,
     });
+
+    // 4b. Sync pre-computed columns on attendance_sessions so the analytics layer
+    // can aggregate directly without joining session_summaries (CRIT-01 fix).
+    await supabase
+      .from("attendance_sessions")
+      .update({
+        total_distance_km: totalDistanceKm,
+        total_duration_seconds: durationSeconds,
+        distance_recalculation_status: "done",
+      })
+      .eq("id", sessionId);
 
     // 5. Update observability counters
     metrics.incrementRecalculations();
@@ -240,7 +252,7 @@ export const sessionSummaryService = {
 
     return {
       session_id: session.id,
-      total_distance_km: Math.round(totalDistanceMeters / 10) / 100,
+      total_distance_km: totalDistanceKm,
       total_duration_seconds: durationSeconds,
     };
   },
@@ -291,6 +303,7 @@ export const sessionSummaryService = {
       );
 
     const executionTimeMs = Math.round(performance.now() - startTime);
+    const totalDistanceKm = Math.round(totalDistanceMeters / 10) / 100; // convert m → km
 
     // 4. Persist summary.
     // upsertSummary's _request parameter is unused (prefixed _) — we satisfy the
@@ -302,13 +315,24 @@ export const sessionSummaryService = {
     await sessionSummaryRepository.upsertSummary(workerCtx, {
       organization_id: sessionData.organization_id as string,
       session_id: sessionData.id as string,
-      total_distance_km: Math.round(totalDistanceMeters / 10) / 100,
+      total_distance_km: totalDistanceKm,
       total_duration_seconds: durationSeconds,
       avg_speed_kmh:
         durationSeconds > 0
           ? Math.round((totalDistanceMeters / 1000 / (durationSeconds / 3600)) * 100) / 100
           : 0,
     });
+
+    // 4b. Sync pre-computed columns on attendance_sessions so the analytics layer
+    // can aggregate directly without joining session_summaries (CRIT-01 fix).
+    await supabase
+      .from("attendance_sessions")
+      .update({
+        total_distance_km: totalDistanceKm,
+        total_duration_seconds: durationSeconds,
+        distance_recalculation_status: "done",
+      })
+      .eq("id", sessionId);
 
     // 5. Update observability counters
     metrics.incrementRecalculations();
@@ -330,7 +354,7 @@ export const sessionSummaryService = {
 
     return {
       session_id: sessionData.id as string,
-      total_distance_km: Math.round(totalDistanceMeters / 10) / 100,
+      total_distance_km: totalDistanceKm,
       total_duration_seconds: durationSeconds,
     };
   },

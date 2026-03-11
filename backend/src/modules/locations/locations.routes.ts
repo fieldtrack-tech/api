@@ -21,21 +21,7 @@ export async function locationsRoutes(app: FastifyInstance): Promise<void> {
                 rateLimit: {
                     max: 10,
                     timeWindow: 10000,
-                    keyGenerator: (req: FastifyRequest) => {
-                        const auth = req.headers.authorization;
-                        if (auth && auth.startsWith("Bearer ")) {
-                            try {
-                                const base64Url = auth.split(".")[1];
-                                if (!base64Url) return req.ip;
-                                const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
-                                const payload = JSON.parse(Buffer.from(base64, "base64").toString()) as { sub?: string };
-                                return payload.sub ?? req.ip;
-                            } catch {
-                                return req.ip;
-                            }
-                        }
-                        return req.ip;
-                    },
+                    keyGenerator: (req: FastifyRequest) => req.user?.sub ?? req.ip,
                 },
             },
             // preValidation ensures 401/403 fires before Zod body validation
@@ -53,21 +39,7 @@ export async function locationsRoutes(app: FastifyInstance): Promise<void> {
                 rateLimit: {
                     max: 10,
                     timeWindow: 10000,
-                    keyGenerator: (req: FastifyRequest) => {
-                        const auth = req.headers.authorization;
-                        if (auth && auth.startsWith("Bearer ")) {
-                            try {
-                                const base64Url = auth.split(".")[1];
-                                if (!base64Url) return req.ip;
-                                const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
-                                const payload = JSON.parse(Buffer.from(base64, "base64").toString()) as { sub?: string };
-                                return payload.sub ?? req.ip;
-                            } catch {
-                                return req.ip;
-                            }
-                        }
-                        return req.ip;
-                    },
+                    keyGenerator: (req: FastifyRequest) => req.user?.sub ?? req.ip,
                 },
             },
             // preValidation ensures 401/403 fires before Zod body validation

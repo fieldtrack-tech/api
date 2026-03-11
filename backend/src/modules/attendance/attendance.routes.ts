@@ -15,7 +15,7 @@ export async function attendanceRoutes(app: FastifyInstance): Promise<void> {
     "/attendance/check-in",
     {
       schema: { tags: ["attendance"] },
-      preHandler: [authenticate],
+      preValidation: [authenticate],
     },
     attendanceController.checkIn,
   );
@@ -25,13 +25,13 @@ export async function attendanceRoutes(app: FastifyInstance): Promise<void> {
     "/attendance/check-out",
     {
       schema: { tags: ["attendance"] },
-      preHandler: [authenticate],
+      preValidation: [authenticate],
     },
     attendanceController.checkOut,
   );
 
   // Recalculate distance and duration explicitly.
-  // Rate-limited per user (JWT sub) to prevent recalculation flooding.
+  // Rate-limited per IP to prevent recalculation flooding.
   app.post<{ Params: { sessionId: string } }>(
     "/attendance/:sessionId/recalculate",
     {
@@ -40,29 +40,10 @@ export async function attendanceRoutes(app: FastifyInstance): Promise<void> {
         rateLimit: {
           max: 5,
           timeWindow: 60_000,
-          keyGenerator: (req: FastifyRequest): string => {
-            const auth = req.headers.authorization;
-            if (auth && auth.startsWith("Bearer ")) {
-              try {
-                const base64Url = auth.split(".")[1];
-                if (!base64Url) return req.ip;
-                const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
-                const payload = JSON.parse(
-                  Buffer.from(base64, "base64").toString("utf8"),
-                ) as Record<string, unknown>;
-                const sub = payload["sub"];
-                return typeof sub === "string" && sub.length > 0
-                  ? `recalc:${sub}`
-                  : req.ip;
-              } catch {
-                return req.ip;
-              }
-            }
-            return req.ip;
-          },
+          keyGenerator: (req: FastifyRequest): string => req.user?.sub ?? req.ip,
         },
       },
-      preHandler: [authenticate],
+      preValidation: [authenticate],
     },
     sessionSummaryController.recalculate,
   );

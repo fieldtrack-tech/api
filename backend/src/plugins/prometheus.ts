@@ -2,6 +2,7 @@ import fp from "fastify-plugin";
 import type { FastifyPluginAsync } from "fastify";
 import client from "prom-client";
 import { trace, context } from "@opentelemetry/api";
+import { env } from "../config/env.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -119,7 +120,16 @@ const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
     }
   });
 
-  fastify.get("/metrics", async (_request, reply) => {
+  fastify.get("/metrics", async (request, reply) => {
+    // Require a shared secret token when one is configured.
+    // In development (token undefined) the endpoint remains open.
+    if (env.METRICS_SCRAPE_TOKEN !== undefined) {
+      const token = request.headers["x-metrics-token"];
+      if (token !== env.METRICS_SCRAPE_TOKEN) {
+        await reply.status(401).send("Unauthorized");
+        return;
+      }
+    }
     reply.header("Content-Type", register.contentType);
     return register.metrics();
   });

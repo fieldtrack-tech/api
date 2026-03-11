@@ -1,15 +1,17 @@
 import type { FastifyRequest, FastifyReply } from "fastify";
 import { analyticsService } from "./analytics.service.js";
-import {
-  orgSummaryQuerySchema,
-  userSummaryQuerySchema,
-  topPerformersQuerySchema,
+import type {
+  OrgSummaryQuery,
+  UserSummaryQuery,
+  TopPerformersQuery,
 } from "./analytics.schema.js";
-import { ok, fail, handleError } from "../../utils/response.js";
+import { ok, handleError } from "../../utils/response.js";
 
 /**
- * Analytics controller — validates query params via Zod, delegates to service,
- * returns consistent { success, data } responses.
+ * Analytics controller — delegates to service and returns consistent
+ * { success, data } responses. Query parameter validation is handled by
+ * Fastify + Zod at the route level (schema.querystring); no manual
+ * re-parsing is performed here.
  *
  * All handlers catch AppError subclasses (BadRequestError, NotFoundError, etc.)
  * and map them to typed HTTP responses. Unexpected errors return 500.
@@ -24,19 +26,12 @@ export const analyticsController = {
     reply: FastifyReply,
   ): Promise<void> {
     try {
-      const parsed = orgSummaryQuerySchema.safeParse(request.query);
-      if (!parsed.success) {
-        const issues = parsed.error.issues.map((i) => i.message).join("; ");
-        reply.status(400).send(fail(`Validation failed: ${issues}`, request.id));
-        return;
-      }
-
+      const query = request.query as OrgSummaryQuery;
       const data = await analyticsService.getOrgSummary(
         request,
-        parsed.data.from,
-        parsed.data.to,
+        query.from,
+        query.to,
       );
-
       reply.status(200).send(ok(data));
     } catch (error) {
       handleError(error, request, reply, "Unexpected error in getOrgSummary");
@@ -52,20 +47,13 @@ export const analyticsController = {
     reply: FastifyReply,
   ): Promise<void> {
     try {
-      const parsed = userSummaryQuerySchema.safeParse(request.query);
-      if (!parsed.success) {
-        const issues = parsed.error.issues.map((i) => i.message).join("; ");
-        reply.status(400).send(fail(`Validation failed: ${issues}`, request.id));
-        return;
-      }
-
+      const query = request.query as UserSummaryQuery;
       const data = await analyticsService.getUserSummary(
         request,
-        parsed.data.userId,
-        parsed.data.from,
-        parsed.data.to,
+        query.userId,
+        query.from,
+        query.to,
       );
-
       reply.status(200).send(ok(data));
     } catch (error) {
       handleError(error, request, reply, "Unexpected error in getUserSummary");
@@ -81,21 +69,14 @@ export const analyticsController = {
     reply: FastifyReply,
   ): Promise<void> {
     try {
-      const parsed = topPerformersQuerySchema.safeParse(request.query);
-      if (!parsed.success) {
-        const issues = parsed.error.issues.map((i) => i.message).join("; ");
-        reply.status(400).send(fail(`Validation failed: ${issues}`, request.id));
-        return;
-      }
-
+      const query = request.query as TopPerformersQuery;
       const data = await analyticsService.getTopPerformers(
         request,
-        parsed.data.metric,
-        parsed.data.from,
-        parsed.data.to,
-        parsed.data.limit,
+        query.metric,
+        query.from,
+        query.to,
+        query.limit,
       );
-
       reply.status(200).send(ok(data));
     } catch (error) {
       handleError(error, request, reply, "Unexpected error in getTopPerformers");

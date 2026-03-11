@@ -7,6 +7,7 @@ import { enqueueDistanceJob } from "./distance.queue.js";
 import { sessionSummaryService } from "../modules/session_summary/session_summary.service.js";
 import { metrics } from "../utils/metrics.js";
 import { env } from "../config/env.js";
+import { supabaseServiceClient as supabase } from "../config/supabase.js";
 
 // ─── Job Payload Shape ────────────────────────────────────────────────────────
 
@@ -104,6 +105,32 @@ export function startDistanceWorker(app: FastifyInstance): Worker | null {
 
   worker.on("error", (err: Error) => {
     app.log.error({ err }, "Distance worker: uncaught worker error");
+  });
+
+  // Fired by BullMQ only after ALL retry attempts are exhausted.
+  // At this point the job will not be retried, so we permanently mark the
+  // session status as 'failed' so operators and crash recovery can identify it.
+  worker.on("failed", (job: Job<DistanceJobData> | undefined, err: Error) => {
+    app.log.error(
+      { jobId: job?.id, sessionId: job?.data.sessionId, err },
+      "Distance worker: job permanently failed after all retries",
+    );
+
+    const failedSessionId = job?.data.sessionId;
+    if (failedSessionId) {
+      void (async () => {
+        const { error } = await supabase
+          .from("attendance_sessions")
+          .update({ distance_recalculation_status: "failed" })
+          .eq("id", failedSessionId);
+        if (error) {
+          app.log.error(
+            { sessionId: failedSessionId, error },
+            "Distance worker: failed to update recalculation status to 'failed'",
+          );
+        }
+      })();
+    }
   });
 
   app.log.info(
