@@ -69,7 +69,6 @@ async function streamAndCalculateDistance(
       );
 
     if (pointsChunk.length === 0) {
-      hasMore = false;
       break;
     }
 

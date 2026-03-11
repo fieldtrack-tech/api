@@ -1,16 +1,13 @@
-import {
-  supabaseAnonClient as supabase,
-  supabaseServiceClient,
-} from "../../config/supabase.js";
-import { enforceTenant } from "../../utils/tenant.js";
+import { supabaseServiceClient as supabase } from "../../config/supabase.js";
+import { orgTable } from "../../db/query.js";
 import { applyPagination } from "../../utils/pagination.js";
 import type { FastifyRequest, FastifyBaseLogger } from "fastify";
 import type { AttendanceSession } from "./attendance.schema.js";
 
 /**
  * Attendance repository — all Supabase queries for attendance_sessions.
- * Every query is scoped via enforceTenant() for tenant isolation.
- * enforceTenant() is always called BEFORE terminal operations (.single/.range).
+ * Every query is scoped via tenantQuery() for tenant isolation.
+ * tenantQuery() is always called BEFORE terminal operations (.single/.range).
  *
  * Phase 15.5 — column names aligned with Phase 16 migration schema:
  *   user_id       → employee_id
@@ -25,13 +22,10 @@ export const attendanceRepository = {
     request: FastifyRequest,
     employeeId: string,
   ): Promise<AttendanceSession | null> {
-    const baseQuery = supabase
-      .from("attendance_sessions")
+    const { data, error } = await orgTable(request, "attendance_sessions")
       .select("id, employee_id, organization_id, checkin_at, checkout_at, distance_recalculation_status, total_distance_km, total_duration_seconds, created_at, updated_at")
       .eq("employee_id", employeeId)
-      .is("checkout_at", null);
-
-    const { data, error } = await enforceTenant(request, baseQuery)
+      .is("checkout_at", null)
       .limit(1)
       .single();
 
@@ -53,14 +47,11 @@ export const attendanceRepository = {
     sessionId: string,
     employeeId: string,
   ): Promise<boolean> {
-    const baseQuery = supabase
-      .from("attendance_sessions")
+    const { data, error } = await orgTable(request, "attendance_sessions")
       .select("id")
       .eq("id", sessionId)
       .eq("employee_id", employeeId)
-      .is("checkout_at", null);
-
-    const { data, error } = await enforceTenant(request, baseQuery)
+      .is("checkout_at", null)
       .limit(1)
       .single();
 
@@ -81,13 +72,10 @@ export const attendanceRepository = {
     request: FastifyRequest,
     employeeId: string,
   ): Promise<boolean> {
-    const baseQuery = supabase
-      .from("employees")
+    const { data, error } = await orgTable(request, "employees")
       .select("id")
       .eq("id", employeeId)
-      .eq("is_active", true);
-
-    const { data, error } = await enforceTenant(request, baseQuery)
+      .eq("is_active", true)
       .limit(1)
       .maybeSingle();
 
@@ -99,7 +87,7 @@ export const attendanceRepository = {
 
   /**
    * Create a new check-in session.
-   * Insert doesn't need enforceTenant() — we explicitly set organization_id.
+   * Insert doesn't need tenantQuery() — we explicitly set organization_id.
    */
   async createSession(
     request: FastifyRequest,
@@ -132,12 +120,9 @@ export const attendanceRepository = {
   ): Promise<AttendanceSession> {
     const now = new Date().toISOString();
 
-    const baseQuery = supabase
-      .from("attendance_sessions")
+    const { data, error } = await orgTable(request, "attendance_sessions")
       .update({ checkout_at: now })
-      .eq("id", sessionId);
-
-    const { data, error } = await enforceTenant(request, baseQuery)
+      .eq("id", sessionId)
       .select("id, employee_id, organization_id, checkin_at, checkout_at, distance_recalculation_status, total_distance_km, total_duration_seconds, created_at, updated_at")
       .single();
 
@@ -156,14 +141,11 @@ export const attendanceRepository = {
     page: number,
     limit: number,
   ): Promise<AttendanceSession[]> {
-    const baseQuery = supabase
-      .from("attendance_sessions")
-      .select("id, employee_id, organization_id, checkin_at, checkout_at, distance_recalculation_status, total_distance_km, total_duration_seconds, created_at, updated_at")
-      .eq("employee_id", employeeId)
-      .order("checkin_at", { ascending: false });
-
     const { data, error } = await applyPagination(
-      enforceTenant(request, baseQuery),
+      orgTable(request, "attendance_sessions")
+        .select("id, employee_id, organization_id, checkin_at, checkout_at, distance_recalculation_status, total_distance_km, total_duration_seconds, created_at, updated_at")
+        .eq("employee_id", employeeId)
+        .order("checkin_at", { ascending: false }),
       page,
       limit,
     );
@@ -184,12 +166,9 @@ export const attendanceRepository = {
   ): Promise<AttendanceSession[]> {
     console.log("ORG FROM REQUEST:", request.organizationId);
     
-    const baseQuery = supabase
-      .from("attendance_sessions")
+    const query = orgTable(request, "attendance_sessions")
       .select("*")
       .order("checkin_at", { ascending: false });
-
-    const query = enforceTenant(request, baseQuery);
     console.log("QUERY ORG FILTER:", request.organizationId);
 
     const { data, error } = await applyPagination(query, page, limit);
@@ -210,12 +189,10 @@ export const attendanceRepository = {
     request: FastifyRequest,
     sessionId: string,
   ): Promise<AttendanceSession | null> {
-    const baseQuery = supabase
-      .from("attendance_sessions")
+    const { data, error } = await orgTable(request, "attendance_sessions")
       .select("id, employee_id, organization_id, checkin_at, checkout_at, distance_recalculation_status, total_distance_km, total_duration_seconds, created_at, updated_at")
-      .eq("id", sessionId);
-
-    const { data, error } = await enforceTenant(request, baseQuery).single();
+      .eq("id", sessionId)
+      .single();
 
     if (error && error.code === "PGRST116") {
       return null;
@@ -245,13 +222,10 @@ export const attendanceRepository = {
     request: FastifyRequest,
     userId: string,
   ): Promise<string | null> {
-    const baseQuery = supabase
-      .from("employees")
+    const { data, error } = await orgTable(request, "employees")
       .select("id")
       .eq("user_id", userId)
-      .eq("is_active", true);
-
-    const { data, error } = await enforceTenant(request, baseQuery)
+      .eq("is_active", true)
       .limit(1)
       .maybeSingle();
 
@@ -268,7 +242,7 @@ export const attendanceRepository = {
     // Hard cap on sessions scanned per recovery run.
     const RECOVERY_SCAN_LIMIT = 500;
 
-    const { data, error } = await supabaseServiceClient
+    const { data, error } = await supabase
       .from("attendance_sessions")
       .select(
         `

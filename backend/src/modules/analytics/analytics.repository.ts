@@ -1,5 +1,4 @@
-import { supabaseAnonClient as supabase } from "../../config/supabase.js";
-import { enforceTenant } from "../../utils/tenant.js";
+import { orgTable } from "../../db/query.js";
 import type { FastifyRequest } from "fastify";
 import type {
   MinimalSessionRow,
@@ -11,7 +10,7 @@ import type {
  *
  * Design principles:
  *  - Never select("*") — only fetch columns required for aggregation.
- *  - All queries are scoped via enforceTenant() — cross-tenant reads are impossible.
+ *  - All queries are scoped via tenantQuery() — cross-tenant reads are impossible.
  *  - Two-query pattern for session range filtering.
  *  - Early-return empty arrays when the first query returns no rows.
  *
@@ -39,19 +38,18 @@ export const analyticsRepository = {
     from: string | undefined,
     to: string | undefined,
   ): Promise<MinimalSessionRow[]> {
-    let baseQuery = supabase
-      .from("attendance_sessions")
+    let query = orgTable(request, "attendance_sessions")
       .select("id, employee_id, total_distance_km, total_duration_seconds")
       .order("checkin_at", { ascending: false });
 
     if (from !== undefined) {
-      baseQuery = baseQuery.gte("checkin_at", from) as typeof baseQuery;
+      query = query.gte("checkin_at", from) as typeof query;
     }
     if (to !== undefined) {
-      baseQuery = baseQuery.lte("checkin_at", to) as typeof baseQuery;
+      query = query.lte("checkin_at", to) as typeof query;
     }
 
-    const { data, error } = await enforceTenant(request, baseQuery);
+    const { data, error } = await query;
 
     if (error) {
       throw new Error(`Analytics: failed to fetch sessions in range: ${error.message}`);
@@ -68,20 +66,19 @@ export const analyticsRepository = {
     from: string | undefined,
     to: string | undefined,
   ): Promise<MinimalSessionRow[]> {
-    let baseQuery = supabase
-      .from("attendance_sessions")
+    let query = orgTable(request, "attendance_sessions")
       .select("id, employee_id, total_distance_km, total_duration_seconds")
       .eq("employee_id", employeeId)
       .order("checkin_at", { ascending: false });
 
     if (from !== undefined) {
-      baseQuery = baseQuery.gte("checkin_at", from) as typeof baseQuery;
+      query = query.gte("checkin_at", from) as typeof query;
     }
     if (to !== undefined) {
-      baseQuery = baseQuery.lte("checkin_at", to) as typeof baseQuery;
+      query = query.lte("checkin_at", to) as typeof query;
     }
 
-    const { data, error } = await enforceTenant(request, baseQuery);
+    const { data, error } = await query;
 
     if (error) {
       throw new Error(`Analytics: failed to fetch user sessions: ${error.message}`);
@@ -97,13 +94,10 @@ export const analyticsRepository = {
     request: FastifyRequest,
     employeeId: string,
   ): Promise<boolean> {
-    const baseQuery = supabase
-      .from("attendance_sessions")
+    const { data, error } = await orgTable(request, "attendance_sessions")
       .select("id")
       .eq("employee_id", employeeId)
       .limit(1);
-
-    const { data, error } = await enforceTenant(request, baseQuery);
 
     if (error) {
       throw new Error(`Analytics: user validation query failed: ${error.message}`);
@@ -126,18 +120,17 @@ export const analyticsRepository = {
     from: string | undefined,
     to: string | undefined,
   ): Promise<MinimalExpenseRow[]> {
-    let baseQuery = supabase
-      .from("expenses")
+    let query = orgTable(request, "expenses")
       .select("amount, status");
 
     if (from !== undefined) {
-      baseQuery = baseQuery.gte("submitted_at", from) as typeof baseQuery;
+      query = query.gte("submitted_at", from) as typeof query;
     }
     if (to !== undefined) {
-      baseQuery = baseQuery.lte("submitted_at", to) as typeof baseQuery;
+      query = query.lte("submitted_at", to) as typeof query;
     }
 
-    const { data, error } = await enforceTenant(request, baseQuery);
+    const { data, error } = await query;
 
     if (error) {
       throw new Error(`Analytics: failed to fetch expenses: ${error.message}`);
@@ -154,12 +147,9 @@ export const analyticsRepository = {
    * Relies on index: employees(organization_id)
    */
   async getActiveEmployeesCount(request: FastifyRequest): Promise<number> {
-    const baseQuery = supabase
-      .from("employees")
+    const result = await orgTable(request, "employees")
       .select("id", { count: "exact", head: true })
       .eq("is_active", true);
-
-    const result = await enforceTenant(request, baseQuery);
 
     if (result.error) {
       throw new Error(
@@ -178,19 +168,18 @@ export const analyticsRepository = {
     from: string | undefined,
     to: string | undefined,
   ): Promise<MinimalExpenseRow[]> {
-    let baseQuery = supabase
-      .from("expenses")
+    let query = orgTable(request, "expenses")
       .select("amount, status")
       .eq("employee_id", employeeId);
 
     if (from !== undefined) {
-      baseQuery = baseQuery.gte("submitted_at", from) as typeof baseQuery;
+      query = query.gte("submitted_at", from) as typeof query;
     }
     if (to !== undefined) {
-      baseQuery = baseQuery.lte("submitted_at", to) as typeof baseQuery;
+      query = query.lte("submitted_at", to) as typeof query;
     }
 
-    const { data, error } = await enforceTenant(request, baseQuery);
+    const { data, error } = await query;
 
     if (error) {
       throw new Error(`Analytics: failed to fetch user expenses: ${error.message}`);

@@ -1,5 +1,6 @@
-import { supabaseAnonClient as supabase } from "../../config/supabase.js";
-import { enforceTenant, type TenantContext } from "../../utils/tenant.js";
+import { supabaseServiceClient as supabase } from "../../config/supabase.js";
+import { orgTable } from "../../db/query.js";
+import type { TenantContext } from "../../utils/tenant.js";
 import { applyPagination } from "../../utils/pagination.js";
 import type { FastifyRequest } from "fastify";
 import type { LocationRecord, CreateLocationBody } from "./locations.schema.js";
@@ -12,7 +13,7 @@ import type { LocationRecord, CreateLocationBody } from "./locations.schema.js";
  *   latitude, longitude, accuracy, recorded_at,
  *   sequence_number, is_duplicate
  *
- * organization_id on the table enables direct enforceTenant() filtering
+ * organization_id on the table enables direct tenantQuery() filtering
  * without joins to attendance_sessions.
  */
 export const locationsRepository = {
@@ -77,17 +78,16 @@ export const locationsRepository = {
         sessionId: string,
         employeeId?: string,
     ): Promise<LocationRecord[]> {
-        let baseQuery = supabase
-            .from("gps_locations")
+        let query = orgTable(request, "gps_locations")
             .select("id, organization_id, session_id, employee_id, latitude, longitude, accuracy, recorded_at, sequence_number, is_duplicate")
             .eq("session_id", sessionId)
             .order("recorded_at", { ascending: true });
 
         if (employeeId !== undefined) {
-            baseQuery = baseQuery.eq("employee_id", employeeId) as typeof baseQuery;
+            query = query.eq("employee_id", employeeId) as typeof query;
         }
 
-        const { data, error } = await enforceTenant(request, baseQuery);
+        const { data, error } = await query;
 
         if (error) {
             throw new Error(`Failed to fetch location history: ${error.message}`);
@@ -101,14 +101,11 @@ export const locationsRepository = {
         page: number,
         limit: number,
     ): Promise<{ latitude: number; longitude: number; recorded_at: string }[]> {
-        const baseQuery = supabase
-            .from("gps_locations")
-            .select("latitude, longitude, recorded_at")
-            .eq("session_id", sessionId)
-            .order("recorded_at", { ascending: true });
-
         const { data, error } = await applyPagination(
-            enforceTenant(context, baseQuery),
+            orgTable(context, "gps_locations")
+                .select("latitude, longitude, recorded_at")
+                .eq("session_id", sessionId)
+                .order("recorded_at", { ascending: true }),
             page,
             limit,
         );

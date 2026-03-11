@@ -1,5 +1,6 @@
 import { supabaseServiceClient as supabase } from "../../config/supabase.js";
-import { enforceTenant, type TenantContext } from "../../utils/tenant.js";
+import { orgTable } from "../../db/query.js";
+import type { TenantContext } from "../../utils/tenant.js";
 import type { FastifyRequest } from "fastify";
 import type { SessionSummary } from "./session_summary.schema.js";
 
@@ -10,7 +11,7 @@ import type { SessionSummary } from "./session_summary.schema.js";
  *   id, organization_id, session_id, total_distance_km,
  *   total_duration_seconds, avg_speed_kmh, computed_at
  *
- * organization_id is present on session_summaries — enforceTenant() is
+ * organization_id is present on session_summaries — tenantQuery() is
  * therefore applied on reads for defense-in-depth.
  */
 export const sessionSummaryRepository = {
@@ -46,12 +47,10 @@ export const sessionSummaryRepository = {
         request: FastifyRequest,
         sessionId: string,
     ): Promise<SessionSummary | null> {
-        const baseQuery = supabase
-            .from("session_summaries")
+        const { data, error } = await orgTable(request, "session_summaries")
             .select("organization_id, session_id, total_distance_km, total_duration_seconds, avg_speed_kmh, computed_at")
-            .eq("session_id", sessionId);
-
-        const { data, error } = await enforceTenant(request, baseQuery).single();
+            .eq("session_id", sessionId)
+            .single();
 
         if (error && error.code === "PGRST116") return null;
         if (error) {

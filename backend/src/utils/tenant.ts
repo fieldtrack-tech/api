@@ -33,12 +33,7 @@ export function enforceTenant<T extends TenantScopable>(
 ): T {
     const orgId = context.organizationId;
     
-    // Diagnostic: log if organizationId is missing
     if (!orgId) {
-        console.error("[enforceTenant] CRITICAL: organizationId is undefined!", {
-            hasContext: !!context,
-            contextKeys: Object.keys(context),
-        });
         throw new Error("Tenant enforcement failed: organizationId missing from context");
     }
     

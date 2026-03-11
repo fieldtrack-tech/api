@@ -1,5 +1,5 @@
-import { supabaseAnonClient as supabase } from "../../config/supabase.js";
-import { enforceTenant } from "../../utils/tenant.js";
+import { supabaseServiceClient as supabase } from "../../config/supabase.js";
+import { orgTable } from "../../db/query.js";
 import { applyPagination } from "../../utils/pagination.js";
 import type { FastifyRequest } from "fastify";
 import type { Expense, ExpenseStatus, CreateExpenseBody } from "./expenses.schema.js";
@@ -43,12 +43,10 @@ export const expensesRepository = {
     request: FastifyRequest,
     expenseId: string,
   ): Promise<Expense | null> {
-    const baseQuery = supabase
-      .from("expenses")
+    const { data, error } = await orgTable(request, "expenses")
       .select("id, organization_id, employee_id, amount, description, status, receipt_url, submitted_at, reviewed_at, reviewed_by, created_at, updated_at")
-      .eq("id", expenseId);
-
-    const { data, error } = await enforceTenant(request, baseQuery).single();
+      .eq("id", expenseId)
+      .single();
 
     if (error && error.code === "PGRST116") return null;
     if (error) {
@@ -63,14 +61,11 @@ export const expensesRepository = {
     page: number,
     limit: number,
   ): Promise<Expense[]> {
-    const baseQuery = supabase
-      .from("expenses")
-      .select("id, organization_id, employee_id, amount, description, status, receipt_url, submitted_at, reviewed_at, reviewed_by, created_at, updated_at")
-      .eq("employee_id", employeeId)
-      .order("submitted_at", { ascending: false });
-
     const { data, error } = await applyPagination(
-      enforceTenant(request, baseQuery),
+      orgTable(request, "expenses")
+        .select("id, organization_id, employee_id, amount, description, status, receipt_url, submitted_at, reviewed_at, reviewed_by, created_at, updated_at")
+        .eq("employee_id", employeeId)
+        .order("submitted_at", { ascending: false }),
       page,
       limit,
     );
@@ -86,13 +81,10 @@ export const expensesRepository = {
     page: number,
     limit: number,
   ): Promise<Expense[]> {
-    const baseQuery = supabase
-      .from("expenses")
-      .select("id, organization_id, employee_id, amount, description, status, receipt_url, submitted_at, reviewed_at, reviewed_by, created_at, updated_at")
-      .order("submitted_at", { ascending: false });
-
     const { data, error } = await applyPagination(
-      enforceTenant(request, baseQuery),
+      orgTable(request, "expenses")
+        .select("id, organization_id, employee_id, amount, description, status, receipt_url, submitted_at, reviewed_at, reviewed_by, created_at, updated_at")
+        .order("submitted_at", { ascending: false }),
       page,
       limit,
     );
@@ -111,12 +103,9 @@ export const expensesRepository = {
   ): Promise<Expense> {
     const now = new Date().toISOString();
 
-    const baseQuery = supabase
-      .from("expenses")
+    const { data, error } = await orgTable(request, "expenses")
       .update({ status, reviewed_at: now, reviewed_by: reviewerId })
-      .eq("id", expenseId);
-
-    const { data, error } = await enforceTenant(request, baseQuery)
+      .eq("id", expenseId)
       .select("id, organization_id, employee_id, amount, description, status, receipt_url, submitted_at, reviewed_at, reviewed_by, created_at, updated_at")
       .single();
 
