@@ -77,23 +77,26 @@ fi
 echo ""
 echo "Auth guards"
 
-for endpoint in \
-  "/attendance/check-in" \
-  "/attendance/check-out" \
-  "/attendance/my-sessions" \
-  "/attendance/org-sessions" \
-  "/expenses" \
-  "/expenses/my" \
-  "/admin/expenses"
-do
-  STATUS=$(request GET "$endpoint")
+STATUS=$(request POST "/attendance/check-in")
+[[ "$STATUS" == "401" ]] && log_pass "POST /attendance/check-in protected" || log_fail "POST /attendance/check-in ($STATUS)"
 
-  if [ "$STATUS" = "401" ]; then
-    log_pass "$endpoint protected"
-  else
-    log_fail "$endpoint returned $STATUS"
-  fi
-done
+STATUS=$(request POST "/attendance/check-out")
+[[ "$STATUS" == "401" ]] && log_pass "POST /attendance/check-out protected" || log_fail "POST /attendance/check-out ($STATUS)"
+
+STATUS=$(request GET "/attendance/my-sessions")
+[[ "$STATUS" == "401" ]] && log_pass "GET /attendance/my-sessions protected" || log_fail "GET /attendance/my-sessions ($STATUS)"
+
+STATUS=$(request GET "/attendance/org-sessions")
+[[ "$STATUS" == "401" ]] && log_pass "GET /attendance/org-sessions protected" || log_fail "GET /attendance/org-sessions ($STATUS)"
+
+STATUS=$(request POST "/expenses")
+[[ "$STATUS" == "401" ]] && log_pass "POST /expenses protected" || log_fail "POST /expenses ($STATUS)"
+
+STATUS=$(request GET "/expenses/my")
+[[ "$STATUS" == "401" ]] && log_pass "GET /expenses/my protected" || log_fail "GET /expenses/my ($STATUS)"
+
+STATUS=$(request GET "/admin/expenses")
+[[ "$STATUS" == "401" ]] && log_pass "GET /admin/expenses protected" || log_fail "GET /admin/expenses ($STATUS)"
 
 # ------------------------------------------------
 # Get employee token
