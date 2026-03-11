@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEPLOY_HISTORY="/home/ashish/FieldTrack-2.0/backend/.deploy_history"
+DEPLOY_HISTORY="/home/ashish/FieldTrack-2.0/apps/api/.deploy_history"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 AUTO_MODE=false

@@ -13,9 +13,9 @@ APP_PORT=3000
 
 NETWORK="fieldtrack_network"
 
-ENV_FILE="/home/ashish/FieldTrack-2.0/backend/.env"
+ENV_FILE="/home/ashish/FieldTrack-2.0/apps/api/.env"
 NGINX_CONF="/etc/nginx/sites-enabled/fieldtrack"
-DEPLOY_HISTORY="/home/ashish/FieldTrack-2.0/backend/.deploy_history"
+DEPLOY_HISTORY="/home/ashish/FieldTrack-2.0/apps/api/.deploy_history"
 MAX_HISTORY=5
 
 MAX_HEALTH_ATTEMPTS=20

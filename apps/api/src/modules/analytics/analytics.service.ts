@@ -248,17 +248,20 @@ export const analyticsService = {
   ): Promise<TopPerformerEntry[]> {
     validateDateRange(from, to);
 
-    // Resolve sessions in range — includes pre-computed distance and duration
-    const sessions = await analyticsRepository.getSessionsInRange(
+    // Single JOIN query — sessions + employee names in one round-trip.
+    const sessions = await analyticsRepository.getSessionsWithEmployeeNames(
       request,
       from,
       to,
     );
 
-    // Group by employee_id in a single pass — no session_summaries join needed
+    // Group by employee_id in a single pass.
+    // Employee name is available on each row (from the JOIN), so we capture it
+    // the first time we see a given employee_id.
     const employeeMap = new Map<
       string,
       {
+        employeeName: string;
         totalDistanceKm: number;
         totalDurationSeconds: number;
         sessionsCount: number;
@@ -267,6 +270,7 @@ export const analyticsService = {
 
     for (const row of sessions) {
       const existing = employeeMap.get(row.employee_id) ?? {
+        employeeName: row.employees?.name ?? row.employee_id,
         totalDistanceKm: 0,
         totalDurationSeconds: 0,
         sessionsCount: 0,
@@ -293,23 +297,26 @@ export const analyticsService = {
       entries.sort((a, b) => b[1].sessionsCount - a[1].sessionsCount);
     }
 
-    // Take top N and shape the response to only include the relevant metric field
+    // Shape the response — names are already in the map, no second query needed
     return entries.slice(0, limit).map(([employeeId, stats]) => {
       if (metric === "distance") {
         return {
           employeeId,
+          employeeName: stats.employeeName,
           totalDistanceKm: Math.round(stats.totalDistanceKm * 100) / 100,
         };
       }
       if (metric === "duration") {
         return {
           employeeId,
+          employeeName: stats.employeeName,
           totalDurationSeconds: stats.totalDurationSeconds,
         };
       }
       // metric === "sessions"
       return {
         employeeId,
+        employeeName: stats.employeeName,
         sessionsCount: stats.sessionsCount,
       };
     });

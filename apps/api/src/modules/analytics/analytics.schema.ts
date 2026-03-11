@@ -53,6 +53,14 @@ export type MinimalSessionRow = Pick<AttendanceSession,
 >;
 
 /**
+ * Session row with an inline employee name, returned by the single-JOIN
+ * query used for top performers. Avoids a second round-trip to employees.
+ */
+export type SessionWithEmployeeRow = MinimalSessionRow & {
+  employees: { name: string } | null;
+};
+
+/**
  * Minimal row shape fetched from expenses.
  * Only amount and status needed for all analytics aggregations.
  */
@@ -61,30 +69,12 @@ export type MinimalExpenseRow = Pick<Expense,
 >;
 
 // ─── Response Data Types ──────────────────────────────────────────────────────
+// Re-exported from @fieldtrack/types — single source of truth shared with the
+// frontend. Add new response shapes to packages/types/src/index.ts instead.
+export type {
+  OrgSummaryData,
+  UserSummaryData,
+  TopPerformerEntry,
+} from "@fieldtrack/types";
 
-export interface OrgSummaryData {
-  totalSessions: number;
-  totalDistanceKm: number;
-  totalDurationSeconds: number;
-  totalExpenses: number;
-  approvedExpenseAmount: number;
-  rejectedExpenseAmount: number;
-  activeEmployeesCount: number;
-}
 
-export interface UserSummaryData {
-  sessionsCount: number;
-  totalDistanceKm: number;
-  totalDurationSeconds: number;
-  totalExpenses: number;
-  approvedExpenseAmount: number;
-  averageDistancePerSession: number;
-  averageSessionDurationSeconds: number;
-}
-
-export interface TopPerformerEntry {
-  employeeId: string;
-  totalDistanceKm?: number;
-  totalDurationSeconds?: number;
-  sessionsCount?: number;
-}

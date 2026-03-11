@@ -3,6 +3,7 @@ import type { FastifyRequest } from "fastify";
 import type {
   MinimalSessionRow,
   MinimalExpenseRow,
+  SessionWithEmployeeRow,
 } from "./analytics.schema.js";
 
 /**
@@ -185,5 +186,45 @@ export const analyticsRepository = {
       throw new Error(`Analytics: failed to fetch user expenses: ${error.message}`);
     }
     return (data ?? []) as MinimalExpenseRow[];
+  },
+
+  /**
+   * Fetch sessions with employee names in a single JOIN query.
+   * Used exclusively for top performers — avoids a second round-trip to
+   * the employees table by embedding `employees(name)` via the FK relation.
+   *
+   * Equivalent SQL:
+   *   SELECT s.id, s.employee_id, s.total_distance_km, s.total_duration_seconds,
+   *          e.name
+   *   FROM   attendance_sessions s
+   *   JOIN   employees e ON e.id = s.employee_id
+   *   WHERE  s.organization_id = $orgId [AND checkin_at filters]
+   */
+  async getSessionsWithEmployeeNames(
+    request: FastifyRequest,
+    from: string | undefined,
+    to: string | undefined,
+  ): Promise<SessionWithEmployeeRow[]> {
+    let query = orgTable(request, "attendance_sessions")
+      .select(
+        "id, employee_id, total_distance_km, total_duration_seconds, employees!attendance_sessions_employee_id_fkey(name)",
+      )
+      .order("checkin_at", { ascending: false });
+
+    if (from !== undefined) {
+      query = query.gte("checkin_at", from) as typeof query;
+    }
+    if (to !== undefined) {
+      query = query.lte("checkin_at", to) as typeof query;
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      throw new Error(
+        `Analytics: failed to fetch sessions with employee names: ${error.message}`,
+      );
+    }
+    return (data ?? []) as SessionWithEmployeeRow[];
   },
 };

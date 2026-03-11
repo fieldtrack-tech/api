@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
+    "typecheck": "tsc --noEmit",
     "lint": "eslint src/modules --ext .ts",
     "start": "node dist/server.js",
     "test": "vitest run",
@@ -19,6 +20,7 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@fieldtrack/types": "*",
     "@fastify/compress": "^8.3.1",
     "@fastify/cors": "^11.2.0",
     "@fastify/helmet": "^13.0.2",
