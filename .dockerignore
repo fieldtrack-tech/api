@@ -1,0 +1,38 @@
+# Root .dockerignore — used when Docker build context is the monorepo root
+
+# Version control
+.git
+.gitignore
+
+# All node_modules (each app installs its own in Docker)
+node_modules
+apps/*/node_modules
+packages/*/node_modules
+
+# Frontend — not needed for the API image
+apps/web
+
+# Build artefacts (Docker regenerates these)
+apps/api/dist
+packages/*/dist
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# IDE / OS
+.idea
+.vscode
+*.swp
+.DS_Store
+Thumbs.db
+
+# Docs and CI config (not needed in image)
+docs
+*.md
+.github
+
+# Infra and scripts not needed in image
+infra
+supabase
