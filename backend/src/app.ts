@@ -45,8 +45,16 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(rateLimitPlugin);
   await app.register(abuseLoggingPlugin);
 
-  // Gzip/deflate/brotli response compression
-  await app.register(fastifyCompress);
+  // Gzip + brotli response compression.
+  // zstd is intentionally excluded: Swagger UI cannot decode it and sends an
+  // empty body. Modern browsers advertise zstd in Accept-Encoding, which
+  // @fastify/compress would otherwise prefer over gzip/br.
+  // threshold: skip compression for responses under 1 KB.
+  await app.register(fastifyCompress, {
+    encodings: ["gzip", "br"],
+    global: true,
+    threshold: 1024,
+  });
 
   // Enrich the active HTTP span with Fastify-level context that the HTTP
   // auto-instrumentation cannot see: the matched route pattern, the Fastify
