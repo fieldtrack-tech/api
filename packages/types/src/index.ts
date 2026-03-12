@@ -30,6 +30,8 @@ export interface AttendanceSession {
   distance_recalculation_status: string;
   created_at: string;
   updated_at: string;
+  /** Populated only for org-wide admin queries (joined from employees table) */
+  employee_name?: string | null;
 }
 
 export interface GpsLocation {

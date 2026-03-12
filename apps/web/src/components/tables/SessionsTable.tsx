@@ -12,9 +12,10 @@ interface SessionsTableProps {
   page?: number;
   hasMore?: boolean;
   onPageChange?: (page: number) => void;
+  showEmployee?: boolean;
 }
 
-const columns: ColumnDef<AttendanceSession>[] = [
+const baseColumns: ColumnDef<AttendanceSession>[] = [
   {
     key: "checkin_at",
     title: "Date",
@@ -45,6 +46,12 @@ const columns: ColumnDef<AttendanceSession>[] = [
   },
 ];
 
+const employeeColumn: ColumnDef<AttendanceSession> = {
+  key: "employee_name",
+  title: "Employee",
+  render: (s) => s.employee_name ?? s.employee_id.slice(0, 8) + "…",
+};
+
 export function SessionsTable({
   sessions,
   onRowClick,
@@ -52,7 +59,12 @@ export function SessionsTable({
   page,
   hasMore,
   onPageChange,
+  showEmployee = false,
 }: SessionsTableProps) {
+  const columns = showEmployee
+    ? [employeeColumn, ...baseColumns]
+    : baseColumns;
+
   return (
     <DataTable
       columns={columns}

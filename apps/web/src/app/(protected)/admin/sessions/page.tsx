@@ -43,6 +43,7 @@ export default function AdminSessionsPage() {
         page={page}
         hasMore={hasMore}
         onPageChange={setPage}
+        showEmployee
       />
     </div>
   );

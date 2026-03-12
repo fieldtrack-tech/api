@@ -158,27 +158,31 @@ export const attendanceRepository = {
 
   /**
    * Get all sessions for the entire organization (admin view).
+   * Joins with employees to include employee_name for display.
    */
   async findSessionsByOrg(
     request: FastifyRequest,
     page: number,
     limit: number,
-  ): Promise<AttendanceSession[]> {
-    console.log("ORG FROM REQUEST:", request.organizationId);
-    
+  ): Promise<(AttendanceSession & { employee_name?: string | null })[]> {
     const query = orgTable(request, "attendance_sessions")
-      .select("*")
+      .select(
+        "id, employee_id, organization_id, checkin_at, checkout_at, distance_recalculation_status, total_distance_km, total_duration_seconds, created_at, updated_at, employees!attendance_sessions_employee_id_fkey(name)",
+      )
       .order("checkin_at", { ascending: false });
-    console.log("QUERY ORG FILTER:", request.organizationId);
 
     const { data, error } = await applyPagination(query, page, limit);
-    
-    console.log("ROWS RETURNED:", data?.length);
 
     if (error) {
       throw new Error(`Failed to fetch org sessions: ${error.message}`);
     }
-    return (data ?? []) as AttendanceSession[];
+
+    // Flatten nested employees object into employee_name field
+    return ((data ?? []) as Array<Record<string, unknown>>).map((row) => {
+      const emp = row.employees as { name?: string } | null;
+      const { employees: _emp, ...rest } = row;
+      return { ...rest, employee_name: emp?.name ?? null } as AttendanceSession & { employee_name?: string | null };
+    });
   },
 
   /**

@@ -42,8 +42,8 @@ export async function expensesRoutes(app: FastifyInstance): Promise<void> {
     "/expenses/my",
     {
       schema: { tags: ["expenses"], querystring: expensePaginationSchema },
-      // preValidation ensures 401/403 fires before querystring validation
-      preValidation: [authenticate, requireRole("EMPLOYEE")],
+      // No role restriction — service returns [] when employeeId is absent (admin users)
+      preValidation: [authenticate],
     },
     expensesController.getMy,
   );
