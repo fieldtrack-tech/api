@@ -35,10 +35,7 @@ COPY apps/api/package.json ./apps/api/
 COPY apps/web/package.json ./apps/web/
 COPY packages/types/package.json ./packages/types/
 
-RUN npm ci --omit=dev --ignore-scripts
-
-# Re-link workspace packages so Node resolution works from /app/dist
-RUN npm rebuild --omit=dev 2>/dev/null || true
+RUN npm ci --omit=dev
 
 COPY --from=builder /workspace/apps/api/dist ./dist
 COPY --from=builder /workspace/packages/types/dist ./packages/types/dist
