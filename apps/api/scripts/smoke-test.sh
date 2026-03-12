@@ -30,11 +30,11 @@ request() {
   TOKEN=${3:-}
 
   if [ -n "$TOKEN" ]; then
-    STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+    STATUS=$(curl -L -s -o /dev/null -w "%{http_code}" \
       -H "Authorization: Bearer $TOKEN" \
       -X "$METHOD" "$BASE_URL$URL")
   else
-    STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+    STATUS=$(curl -L -s -o /dev/null -w "%{http_code}" \
       -X "$METHOD" "$BASE_URL$URL")
   fi
 
@@ -48,7 +48,7 @@ echo "================================"
 echo "Waiting for API..."
 
 for i in {1..30}; do
-  STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/health")
+  STATUS=$(curl -L -s -o /dev/null -w "%{http_code}" "$BASE_URL/health")
   if [ "$STATUS" = "200" ]; then
     echo "API healthy"
     break
@@ -77,25 +77,25 @@ fi
 echo ""
 echo "Auth guards"
 
-STATUS=$(request POST "/attendance/check-in")
+STATUS=$(request POST "/api/attendance/check-in")
 [[ "$STATUS" == "401" ]] && log_pass "POST /attendance/check-in protected" || log_fail "POST /attendance/check-in ($STATUS)"
 
-STATUS=$(request POST "/attendance/check-out")
+STATUS=$(request POST "/api/attendance/check-out")
 [[ "$STATUS" == "401" ]] && log_pass "POST /attendance/check-out protected" || log_fail "POST /attendance/check-out ($STATUS)"
 
-STATUS=$(request GET "/attendance/my-sessions")
+STATUS=$(request GET "/api/attendance/my-sessions")
 [[ "$STATUS" == "401" ]] && log_pass "GET /attendance/my-sessions protected" || log_fail "GET /attendance/my-sessions ($STATUS)"
 
-STATUS=$(request GET "/attendance/org-sessions")
+STATUS=$(request GET "/api/attendance/org-sessions")
 [[ "$STATUS" == "401" ]] && log_pass "GET /attendance/org-sessions protected" || log_fail "GET /attendance/org-sessions ($STATUS)"
 
-STATUS=$(request POST "/expenses")
+STATUS=$(request POST "/api/expenses")
 [[ "$STATUS" == "401" ]] && log_pass "POST /expenses protected" || log_fail "POST /expenses ($STATUS)"
 
-STATUS=$(request GET "/expenses/my")
+STATUS=$(request GET "/api/expenses/my")
 [[ "$STATUS" == "401" ]] && log_pass "GET /expenses/my protected" || log_fail "GET /expenses/my ($STATUS)"
 
-STATUS=$(request GET "/admin/expenses")
+STATUS=$(request GET "/api/admin/expenses")
 [[ "$STATUS" == "401" ]] && log_pass "GET /admin/expenses protected" || log_fail "GET /admin/expenses ($STATUS)"
 
 # ------------------------------------------------
@@ -105,7 +105,7 @@ STATUS=$(request GET "/admin/expenses")
 echo ""
 echo "Authenticating employee..."
 
-EMP_TOKEN=$(curl -s \
+EMP_TOKEN=$(curl -L -s \
   -H "apikey: $SUPABASE_ANON" \
   -H "Content-Type: application/json" \
   -d "{\"email\":\"$EMP_EMAIL\",\"password\":\"$EMP_PASSWORD\"}" \
@@ -120,7 +120,7 @@ fi
 # Employee tests
 # ------------------------------------------------
 
-STATUS=$(request GET "/attendance/my-sessions" "$EMP_TOKEN")
+STATUS=$(request GET "/api/attendance/my-sessions" "$EMP_TOKEN")
 
 if [ "$STATUS" = "200" ]; then
   log_pass "Employee access /attendance/my-sessions"
@@ -135,7 +135,7 @@ fi
 echo ""
 echo "Authenticating admin..."
 
-ADMIN_TOKEN=$(curl -s \
+ADMIN_TOKEN=$(curl -L -s \
   -H "apikey: $SUPABASE_ANON" \
   -H "Content-Type: application/json" \
   -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" \
@@ -146,7 +146,7 @@ if [ "$ADMIN_TOKEN" = "null" ]; then
   exit 1
 fi
 
-STATUS=$(request GET "/admin/org-summary" "$ADMIN_TOKEN")
+STATUS=$(request GET "/api/admin/org-summary" "$ADMIN_TOKEN")
 
 if [ "$STATUS" = "200" ]; then
   log_pass "Admin access /admin/org-summary"
