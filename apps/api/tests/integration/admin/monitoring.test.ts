@@ -13,6 +13,7 @@ vi.mock("../../../src/workers/distance.queue.js", () => ({
 
 vi.mock("../../../src/modules/admin/monitoring.repository.js", () => ({
   monitoringRepository: {
+    getActiveSession: vi.fn(),
     startSession: vi.fn(),
     stopSession: vi.fn(),
     findHistory: vi.fn(),
@@ -65,6 +66,8 @@ describe("Admin Monitoring Integration Tests", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default: no active session, so startMonitoring proceeds to startSession
+    vi.mocked(monitoringRepository.getActiveSession).mockResolvedValue(null);
   });
 
   // ─── POST /admin/start-monitoring ────────────────────────────────────────────
