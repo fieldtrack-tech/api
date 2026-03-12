@@ -54,6 +54,8 @@ const pendingExpense = {
   reviewed_by: null,
   created_at: new Date().toISOString(),
   updated_at: new Date().toISOString(),
+  employee_code: "EMP001",
+  employee_name: "Test Employee",
 };
 
 const approvedExpense = {

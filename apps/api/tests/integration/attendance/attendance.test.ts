@@ -49,6 +49,9 @@ const openSession = {
   total_duration_seconds: null,
   created_at: new Date().toISOString(),
   updated_at: new Date().toISOString(),
+  employee_code: "EMP001",
+  employee_name: "Test Employee",
+  activityStatus: "ACTIVE" as const,
 };
 
 const closedSession = {

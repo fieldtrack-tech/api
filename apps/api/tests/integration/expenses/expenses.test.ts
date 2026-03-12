@@ -47,6 +47,8 @@ const pendingExpense = {
   reviewed_by: null,
   created_at: new Date().toISOString(),
   updated_at: new Date().toISOString(),
+  employee_code: "EMP001",
+  employee_name: "Test Employee",
 };
 
 const approvedExpense = {
@@ -84,7 +86,8 @@ describe("Expenses Integration Tests", () => {
       expect(res.statusCode).toBe(401);
     });
 
-    it("returns 403 when called by an ADMIN (EMPLOYEE role required)", async () => {
+    it("returns 403 when called by an ADMIN without an employee record", async () => {
+      // Admin token has no employee_id claim → service rejects with ForbiddenError
       const res = await app.inject({
         method: "POST",
         url: "/expenses",
@@ -95,6 +98,35 @@ describe("Expenses Integration Tests", () => {
         body: JSON.stringify({ amount: 50, description: "Test expense" }),
       });
       expect(res.statusCode).toBe(403);
+    });
+
+    it("returns 201 when called by an ADMIN who has an employee record", async () => {
+      vi.mocked(expensesRepository.createExpense).mockResolvedValue(
+        pendingExpense as never,
+      );
+      // Sign a token with ADMIN role but also include employee_id to simulate an
+      // admin who also has an employees row in the DB.
+      const adminWithEmployeeToken = app.jwt.sign({
+        sub: TEST_ADMIN_ID,
+        role: "ADMIN",
+        organization_id: TEST_ORG_ID,
+        employee_id: TEST_ADMIN_ID,
+      });
+
+      const res = await app.inject({
+        method: "POST",
+        url: "/expenses",
+        headers: {
+          authorization: `Bearer ${adminWithEmployeeToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ amount: 75.5, description: "Admin expense" }),
+      });
+
+      expect(res.statusCode).toBe(201);
+      const body = JSON.parse(res.body) as { success: boolean; data: typeof pendingExpense };
+      expect(body.success).toBe(true);
+      expect(body.data.status).toBe("PENDING");
     });
 
     it("returns 201 with created expense on valid submission", async () => {
