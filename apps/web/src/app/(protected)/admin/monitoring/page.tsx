@@ -68,7 +68,8 @@ export default function AdminMonitoringPage() {
         toast({ title: "Monitoring stopped", description: "Location monitoring has been stopped." });
       },
       onError: (err) => {
-        const msg = err.message.includes("404") ? "No active session to stop." : err.message;
+        const isNotFound = (err as { status?: number }).status === 404;
+        const msg = isNotFound ? "No active session to stop." : err.message;
         toast({ variant: "destructive", title: "Failed to stop", description: msg });
       },
     });

@@ -31,7 +31,9 @@ export const monitoringRepository = {
 
   /**
    * Close the most recent open monitoring session for this admin.
-   * Throws PGRST116 (mapped to NotFoundError by the service) if none is open.
+   * Returns null (mapped to NotFoundError by the service) if none is open.
+   * Handles the edge case of multiple open sessions gracefully by closing
+   * all of them and returning the most recently started one.
    */
   async stopSession(request: FastifyRequest): Promise<AdminSession | null> {
     const now = new Date().toISOString();
@@ -40,13 +42,20 @@ export const monitoringRepository = {
       .update({ ended_at: now })
       .eq("admin_id", request.user.sub)
       .is("ended_at", null)
-      .select(MONITORING_COLS)
-      .maybeSingle();
+      .select(MONITORING_COLS);
 
     if (error) {
       throw new Error(`Failed to stop monitoring session: ${error.message}`);
     }
-    return data as AdminSession | null;
+
+    const sessions = (data ?? []) as AdminSession[];
+
+    if (sessions.length === 0) return null;
+
+    // Return the most recent session (handles >1 open sessions gracefully)
+    return sessions.sort(
+      (a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime(),
+    )[0];
   },
 
   /**
