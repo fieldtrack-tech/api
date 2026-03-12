@@ -14,6 +14,10 @@ export type Employee = Database["public"]["Tables"]["employees"]["Row"];
 export type EmployeeInsert = Database["public"]["Tables"]["employees"]["Insert"];
 export type EmployeeUpdate = Database["public"]["Tables"]["employees"]["Update"];
 
+export type AdminSession = Database["public"]["Tables"]["admin_sessions"]["Row"];
+export type AdminSessionInsert = Database["public"]["Tables"]["admin_sessions"]["Insert"];
+export type AdminSessionUpdate = Database["public"]["Tables"]["admin_sessions"]["Update"];
+
 export type AttendanceSession = Database["public"]["Tables"]["attendance_sessions"]["Row"];
 export type AttendanceSessionInsert = Database["public"]["Tables"]["attendance_sessions"]["Insert"];
 export type AttendanceSessionUpdate = Database["public"]["Tables"]["attendance_sessions"]["Update"];

@@ -6,6 +6,7 @@ import type {
   CreateExpenseBody,
   UpdateExpenseStatusBody,
 } from "./expenses.schema.js";
+import type { EnrichedExpense } from "./expenses.repository.js";
 
 /**
  * Expenses service — business rules for expense management.
@@ -63,7 +64,7 @@ export const expensesService = {
     request: FastifyRequest,
     page: number,
     limit: number,
-  ): Promise<Expense[]> {
+  ): Promise<EnrichedExpense[]> {
     const employeeId = request.employeeId;
     if (!employeeId) return [];
 
@@ -78,7 +79,7 @@ export const expensesService = {
     request: FastifyRequest,
     page: number,
     limit: number,
-  ): Promise<Expense[]> {
+  ): Promise<EnrichedExpense[]> {
     return expensesRepository.findExpensesByOrg(request, page, limit);
   },
 

@@ -27,6 +27,7 @@ import { supabaseServiceClient } from "../config/supabase.js";
  * Passing any other string to orgTable() is a compile-time error.
  */
 export type OrgScopedTable =
+    | "admin_sessions"
     | "attendance_sessions"
     | "employees"
     | "expenses"

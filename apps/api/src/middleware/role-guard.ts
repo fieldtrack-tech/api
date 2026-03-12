@@ -5,18 +5,25 @@ import { ForbiddenError } from "../utils/errors.js";
 /**
  * Creates a preHandler hook that enforces a specific role.
  * Must be used AFTER the authenticate middleware.
- *
- * Phase 18: Uses throw pattern for cleaner error handling.
- * Fastify's error handler will catch the exception and format the response
- * consistently with all other API errors.
- *
- * Usage in routes:
- *   app.get("/admin-only", { preHandler: [authenticate, requireRole("ADMIN")] }, handler);
  */
 export function requireRole(role: JwtPayload["role"]) {
     return async (request: FastifyRequest): Promise<void> => {
         if (request.user.role !== role) {
             throw new ForbiddenError(`This action requires ${role} role`);
+        }
+    };
+}
+
+/**
+ * Creates a preHandler hook that allows any of the given roles.
+ * Use when both ADMIN and EMPLOYEE should access the same endpoint.
+ */
+export function requireAnyRole(...roles: JwtPayload["role"][]) {
+    return async (request: FastifyRequest): Promise<void> => {
+        if (!roles.includes(request.user.role)) {
+            throw new ForbiddenError(
+                `This action requires one of: ${roles.join(", ")}`,
+            );
         }
     };
 }

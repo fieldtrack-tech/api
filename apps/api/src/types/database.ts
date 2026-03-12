@@ -39,6 +39,48 @@ export type Database = {
   }
   public: {
     Tables: {
+      admin_sessions: {
+        Row: {
+          admin_id: string
+          created_at: string
+          ended_at: string | null
+          id: string
+          organization_id: string
+          started_at: string
+        }
+        Insert: {
+          admin_id: string
+          created_at?: string
+          ended_at?: string | null
+          id?: string
+          organization_id: string
+          started_at?: string
+        }
+        Update: {
+          admin_id?: string
+          created_at?: string
+          ended_at?: string | null
+          id?: string
+          organization_id?: string
+          started_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "admin_sessions_admin_id_fkey"
+            columns: ["admin_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "admin_sessions_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       attendance_sessions: {
         Row: {
           checkin_at: string
@@ -96,6 +138,7 @@ export type Database = {
       employees: {
         Row: {
           created_at: string
+          employee_code: string
           id: string
           is_active: boolean
           name: string
@@ -106,6 +149,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          employee_code: string
           id?: string
           is_active?: boolean
           name: string
@@ -116,6 +160,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          employee_code?: string
           id?: string
           is_active?: boolean
           name?: string

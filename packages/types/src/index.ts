@@ -15,8 +15,7 @@
 // ─── Enums ────────────────────────────────────────────────────────────────────
 
 export type UserRole = "ADMIN" | "EMPLOYEE";
-export type ExpenseStatus = "PENDING" | "APPROVED" | "REJECTED";
-
+export type ExpenseStatus = "PENDING" | "APPROVED" | "REJECTED";export type ActivityStatus = "ACTIVE" | "RECENT" | "INACTIVE";
 // ─── Database row shapes (API response payloads) ──────────────────────────────
 
 export interface AttendanceSession {
@@ -30,8 +29,12 @@ export interface AttendanceSession {
   distance_recalculation_status: string;
   created_at: string;
   updated_at: string;
+  /** Joined from employees table — present on all enriched queries */
+  employee_code?: string | null;
   /** Populated only for org-wide admin queries (joined from employees table) */
   employee_name?: string | null;
+  /** Computed activity classification based on checkout_at timestamp */
+  activityStatus?: ActivityStatus;
 }
 
 export interface GpsLocation {
@@ -60,6 +63,9 @@ export interface Expense {
   reviewed_by: string | null;
   created_at: string;
   updated_at: string;
+  /** Joined from employees table */
+  employee_code?: string | null;
+  employee_name?: string | null;
 }
 
 // ─── Analytics API response shapes ───────────────────────────────────────────
@@ -90,6 +96,27 @@ export interface TopPerformerEntry {
   totalDistanceKm?: number;
   totalDurationSeconds?: number;
   sessionsCount?: number;
+}
+
+// ─── Admin monitoring ──────────────────────────────────────────────────────────────
+
+export interface AdminSession {
+  id: string;
+  admin_id: string;
+  organization_id: string;
+  started_at: string;
+  ended_at: string | null;
+  created_at: string;
+}
+
+// ─── Dashboard ─────────────────────────────────────────────────────────────────────
+
+export interface DashboardSummary {
+  sessionsThisWeek: number;
+  distanceThisWeek: number;
+  hoursThisWeek: number;
+  expensesSubmitted: number;
+  expensesApproved: number;
 }
 
 // ─── Generic API response wrappers ───────────────────────────────────────────

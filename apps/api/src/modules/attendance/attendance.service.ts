@@ -7,6 +7,7 @@ import {
   requireEmployeeContext,
 } from "../../utils/errors.js";
 import type { AttendanceSession } from "./attendance.schema.js";
+import type { EnrichedAttendanceSession } from "./attendance.repository.js";
 
 /**
  * Attendance service — business logic for check-in/check-out.
@@ -58,7 +59,7 @@ export const attendanceService = {
     request: FastifyRequest,
     page: number,
     limit: number,
-  ): Promise<AttendanceSession[]> {
+  ): Promise<EnrichedAttendanceSession[]> {
     const employeeId = request.employeeId;
     if (!employeeId) return [];
     return attendanceRepository.findSessionsByUser(request, employeeId, page, limit);
@@ -68,7 +69,7 @@ export const attendanceService = {
     request: FastifyRequest,
     page: number,
     limit: number,
-  ): Promise<AttendanceSession[]> {
+  ): Promise<EnrichedAttendanceSession[]> {
     return attendanceRepository.findSessionsByOrg(request, page, limit);
   },
 };

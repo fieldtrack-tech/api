@@ -31,9 +31,10 @@ export async function expensesRoutes(app: FastifyInstance): Promise<void> {
           keyGenerator: (req: FastifyRequest): string => req.user?.sub ?? req.ip,
         },
       },
-      // preValidation runs before body parsing+validation, so auth/role checks
-      // always return 401/403 even when the body is invalid.
-      preValidation: [authenticate, requireRole("EMPLOYEE")],
+      // No role restriction — admins who also have an employee record can submit
+      // expenses. The service layer's requireEmployeeContext() guard rejects any
+      // authenticated user who has no employees row (403).
+      preValidation: [authenticate],
     },
     expensesController.create,
   );

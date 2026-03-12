@@ -3,6 +3,26 @@ import { orgTable } from "../../db/query.js";
 import { applyPagination } from "../../utils/pagination.js";
 import type { FastifyRequest, FastifyBaseLogger } from "fastify";
 import type { AttendanceSession } from "./attendance.schema.js";
+import type { ActivityStatus } from "@fieldtrack/types";
+
+/** Enriched session returned by list queries — adds employee info and activityStatus. */
+export type EnrichedAttendanceSession = AttendanceSession & {
+  employee_code: string | null;
+  employee_name: string | null;
+  activityStatus: ActivityStatus;
+};
+
+/**
+ * Computes the activity status of a session based on its checkout timestamp.
+ * - ACTIVE:   no checkout yet
+ * - RECENT:   checked out within the last 24 hours
+ * - INACTIVE: checked out more than 24 hours ago
+ */
+function computeActivityStatus(checkoutAt: string | null): ActivityStatus {
+  if (checkoutAt === null) return "ACTIVE";
+  const ageMs = Date.now() - new Date(checkoutAt).getTime();
+  return ageMs < 86_400_000 ? "RECENT" : "INACTIVE";
+}
 
 /**
  * Attendance repository — all Supabase queries for attendance_sessions.
@@ -134,16 +154,17 @@ export const attendanceRepository = {
 
   /**
    * Get all sessions for a specific employee (employee's own sessions).
+   * Joins employees to include employee_code, employee_name, and activityStatus.
    */
   async findSessionsByUser(
     request: FastifyRequest,
     employeeId: string,
     page: number,
     limit: number,
-  ): Promise<AttendanceSession[]> {
+  ): Promise<EnrichedAttendanceSession[]> {
     const { data, error } = await applyPagination(
       orgTable(request, "attendance_sessions")
-        .select("id, employee_id, organization_id, checkin_at, checkout_at, distance_recalculation_status, total_distance_km, total_duration_seconds, created_at, updated_at")
+        .select("id, employee_id, organization_id, checkin_at, checkout_at, distance_recalculation_status, total_distance_km, total_duration_seconds, created_at, updated_at, employees!attendance_sessions_employee_id_fkey(name, employee_code)")
         .eq("employee_id", employeeId)
         .order("checkin_at", { ascending: false }),
       page,
@@ -153,21 +174,31 @@ export const attendanceRepository = {
     if (error) {
       throw new Error(`Failed to fetch user sessions: ${error.message}`);
     }
-    return (data ?? []) as AttendanceSession[];
+
+    return ((data ?? []) as Array<Record<string, unknown>>).map((row) => {
+      const emp = row.employees as { name?: string; employee_code?: string } | null;
+      const { employees: _emp, ...rest } = row;
+      return {
+        ...rest,
+        employee_name: emp?.name ?? null,
+        employee_code: emp?.employee_code ?? null,
+        activityStatus: computeActivityStatus(rest.checkout_at as string | null),
+      } as EnrichedAttendanceSession;
+    });
   },
 
   /**
    * Get all sessions for the entire organization (admin view).
-   * Joins with employees to include employee_name for display.
+   * Joins with employees to include employee_code, employee_name, and activityStatus.
    */
   async findSessionsByOrg(
     request: FastifyRequest,
     page: number,
     limit: number,
-  ): Promise<(AttendanceSession & { employee_name?: string | null })[]> {
+  ): Promise<EnrichedAttendanceSession[]> {
     const query = orgTable(request, "attendance_sessions")
       .select(
-        "id, employee_id, organization_id, checkin_at, checkout_at, distance_recalculation_status, total_distance_km, total_duration_seconds, created_at, updated_at, employees!attendance_sessions_employee_id_fkey(name)",
+        "id, employee_id, organization_id, checkin_at, checkout_at, distance_recalculation_status, total_distance_km, total_duration_seconds, created_at, updated_at, employees!attendance_sessions_employee_id_fkey(name, employee_code)",
       )
       .order("checkin_at", { ascending: false });
 
@@ -177,11 +208,15 @@ export const attendanceRepository = {
       throw new Error(`Failed to fetch org sessions: ${error.message}`);
     }
 
-    // Flatten nested employees object into employee_name field
     return ((data ?? []) as Array<Record<string, unknown>>).map((row) => {
-      const emp = row.employees as { name?: string } | null;
+      const emp = row.employees as { name?: string; employee_code?: string } | null;
       const { employees: _emp, ...rest } = row;
-      return { ...rest, employee_name: emp?.name ?? null } as AttendanceSession & { employee_name?: string | null };
+      return {
+        ...rest,
+        employee_name: emp?.name ?? null,
+        employee_code: emp?.employee_code ?? null,
+        activityStatus: computeActivityStatus(rest.checkout_at as string | null),
+      } as EnrichedAttendanceSession;
     });
   },
 
