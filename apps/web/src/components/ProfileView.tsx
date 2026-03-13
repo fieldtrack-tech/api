@@ -1,143 +1,133 @@
 "use client";
 
-import { EmployeeProfileData, ActivityStatus } from "@/types";
+import { EmployeeProfileData } from "@/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { MetricCard } from "@/components/MetricCard";
+import { ActivityBadge } from "@/components/ActivityBadge";
 import { formatDistance, formatDuration, formatDate } from "@/lib/utils";
-import { User, Phone, Hash, Activity, MapPin, Clock, Receipt, CheckCircle } from "lucide-react";
+import { User, Phone, Hash, Activity, MapPin, Clock, Receipt, CheckCircle, Calendar } from "lucide-react";
 
 interface ProfileViewProps {
   profile: EmployeeProfileData;
+  /** When provided, shows the user's leaderboard rank */
+  rank?: number;
 }
 
-function activityBadgeVariant(status: ActivityStatus) {
-  if (status === "ACTIVE") return "default";
-  if (status === "RECENT") return "secondary";
-  return "outline";
-}
-
-function activityLabel(status: ActivityStatus) {
-  if (status === "ACTIVE") return "Active";
-  if (status === "RECENT") return "Recently Active";
-  return "Inactive";
-}
-
-export function ProfileView({ profile }: ProfileViewProps) {
+export function ProfileView({ profile, rank }: ProfileViewProps) {
   return (
     <div className="space-y-6">
-      {/* Identity */}
+      {/* Identity Card */}
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <User className="h-5 w-5" />
+        <CardHeader className="pb-4">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <User className="h-4 w-4" />
             Identity
           </CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-2">
-          <div>
-            <p className="text-sm text-muted-foreground">Name</p>
-            <p className="font-medium">{profile.name}</p>
-          </div>
-          <div>
-            <p className="text-sm text-muted-foreground">Employee Code</p>
-            <p className="font-medium flex items-center gap-1">
-              <Hash className="h-3 w-3" />
-              {profile.employee_code ?? "—"}
-            </p>
-          </div>
-          <div>
-            <p className="text-sm text-muted-foreground">Phone</p>
-            <p className="font-medium flex items-center gap-1">
-              <Phone className="h-3 w-3" />
-              {profile.phone ?? "—"}
-            </p>
-          </div>
-          <div>
-            <p className="text-sm text-muted-foreground">Status</p>
-            <div className="flex items-center gap-2">
-              <Badge variant={profile.is_active ? "default" : "outline"}>
-                {profile.is_active ? "Active" : "Inactive"}
-              </Badge>
+        <CardContent>
+          <div className="flex flex-col sm:flex-row sm:items-start gap-4">
+            {/* Avatar */}
+            <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary text-2xl font-bold">
+              {profile.name
+                .split(" ")
+                .slice(0, 2)
+                .map((n) => n[0])
+                .join("")
+                .toUpperCase()}
+            </div>
+
+            {/* Details grid */}
+            <div className="grid flex-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <div>
+                <p className="text-xs text-muted-foreground">Full Name</p>
+                <p className="font-medium">{profile.name}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Employee Code</p>
+                <p className="font-medium flex items-center gap-1">
+                  <Hash className="h-3 w-3 text-muted-foreground" />
+                  {profile.employee_code ?? "—"}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Phone</p>
+                <p className="font-medium flex items-center gap-1">
+                  <Phone className="h-3 w-3 text-muted-foreground" />
+                  {profile.phone ?? "—"}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Account Status</p>
+                <span
+                  className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                    profile.is_active
+                      ? "bg-emerald-100 text-emerald-800"
+                      : "bg-slate-100 text-slate-600"
+                  }`}
+                >
+                  {profile.is_active ? "Active" : "Inactive"}
+                </span>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Activity Status</p>
+                <ActivityBadge status={profile.activityStatus} />
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Member Since</p>
+                <p className="font-medium flex items-center gap-1">
+                  <Calendar className="h-3 w-3 text-muted-foreground" />
+                  {formatDate(profile.created_at)}
+                </p>
+              </div>
+              {profile.last_activity_at && (
+                <div>
+                  <p className="text-xs text-muted-foreground">Last Active</p>
+                  <p className="font-medium">{formatDate(profile.last_activity_at)}</p>
+                </div>
+              )}
+              {rank != null && (
+                <div>
+                  <p className="text-xs text-muted-foreground">Leaderboard Rank</p>
+                  <p className="font-bold text-primary text-lg">#{rank}</p>
+                </div>
+              )}
             </div>
           </div>
-          <div>
-            <p className="text-sm text-muted-foreground">Member Since</p>
-            <p className="font-medium">{formatDate(profile.created_at)}</p>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Activity Status */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Activity className="h-5 w-5" />
-            Activity Status
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="flex items-center gap-4">
-          <Badge variant={activityBadgeVariant(profile.activityStatus)}>
-            {activityLabel(profile.activityStatus)}
-          </Badge>
-          {profile.last_activity_at && (
-            <p className="text-sm text-muted-foreground">
-              Last active: {formatDate(profile.last_activity_at)}
-            </p>
-          )}
         </CardContent>
       </Card>
 
       {/* Performance Metrics */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Total Sessions</CardTitle>
-            <Activity className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{profile.stats.totalSessions.toLocaleString()}</div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Total Distance</CardTitle>
-            <MapPin className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{formatDistance(profile.stats.totalDistanceKm)}</div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Total Duration</CardTitle>
-            <Clock className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{formatDuration(profile.stats.totalDurationSeconds)}</div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Expenses Submitted</CardTitle>
-            <Receipt className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{profile.stats.expensesSubmitted.toLocaleString()}</div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Expenses Approved</CardTitle>
-            <CheckCircle className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{profile.stats.expensesApproved.toLocaleString()}</div>
-          </CardContent>
-        </Card>
+      <div>
+        <h3 className="mb-3 text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+          Performance
+        </h3>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <MetricCard
+            title="Total Sessions"
+            value={profile.stats.totalSessions.toLocaleString()}
+            icon={<Activity className="h-4 w-4" />}
+          />
+          <MetricCard
+            title="Total Distance"
+            value={formatDistance(profile.stats.totalDistanceKm)}
+            icon={<MapPin className="h-4 w-4" />}
+          />
+          <MetricCard
+            title="Total Duration"
+            value={formatDuration(profile.stats.totalDurationSeconds)}
+            icon={<Clock className="h-4 w-4" />}
+          />
+          <MetricCard
+            title="Expenses Submitted"
+            value={profile.stats.expensesSubmitted.toLocaleString()}
+            icon={<Receipt className="h-4 w-4" />}
+          />
+          <MetricCard
+            title="Expenses Approved"
+            value={profile.stats.expensesApproved.toLocaleString()}
+            icon={<CheckCircle className="h-4 w-4" />}
+          />
+        </div>
       </div>
     </div>
   );

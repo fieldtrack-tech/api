@@ -11,6 +11,7 @@ import {
   ClipboardList,
   Activity,
   UserCircle,
+  Trophy,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
@@ -27,15 +28,12 @@ export function SidebarNav() {
   const { permissions } = useAuth();
 
   const navItems: NavItem[] = [
-    ...(permissions.viewAnalytics
-      ? [
-          {
-            href: "/dashboard",
-            label: "Dashboard",
-            icon: <LayoutDashboard className="h-5 w-5" />,
-          },
-        ]
-      : []),
+    {
+      href: "/dashboard",
+      label: "Dashboard",
+      icon: <LayoutDashboard className="h-5 w-5" />,
+    },
+    { href: "/leaderboard", label: "Leaderboard", icon: <Trophy className="h-5 w-5" /> },
     { href: "/sessions", label: "Sessions", icon: <Clock className="h-5 w-5" /> },
     { href: "/expenses", label: "Expenses", icon: <Receipt className="h-5 w-5" /> },
     { href: "/profile", label: "Profile", icon: <UserCircle className="h-5 w-5" /> },

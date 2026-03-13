@@ -9,6 +9,7 @@ import {
   Tooltip,
   ResponsiveContainer,
   Legend,
+  TooltipProps,
 } from "recharts";
 import { SessionTrendEntry } from "@/types";
 import { EmptyState } from "@/components/EmptyState";
@@ -16,6 +17,26 @@ import { TrendingUp } from "lucide-react";
 
 interface SessionTrendChartProps {
   data: SessionTrendEntry[];
+}
+
+function CustomTooltip({ active, payload, label }: TooltipProps<number, string>) {
+  if (!active || !payload || payload.length === 0) return null;
+
+  return (
+    <div className="rounded-lg border bg-background p-3 shadow-md text-sm">
+      <p className="mb-2 font-semibold text-foreground">{label}</p>
+      {payload.map((p) => (
+        <div key={p.dataKey} className="flex items-center gap-2">
+          <span
+            className="inline-block h-2 w-2 rounded-full"
+            style={{ backgroundColor: p.color }}
+          />
+          <span className="text-muted-foreground">{p.name}:</span>
+          <span className="font-medium">{p.value}</span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export function SessionTrendChart({ data }: SessionTrendChartProps) {
@@ -30,29 +51,63 @@ export function SessionTrendChart({ data }: SessionTrendChartProps) {
   }
 
   const chartData = data.map((entry) => ({
-    date: entry.date,
+    date: new Date(entry.date).toLocaleDateString("en-IN", {
+      month: "short",
+      day: "numeric",
+    }),
     Sessions: entry.sessions,
-    "Distance (km)": Math.round(entry.distance * 100) / 100,
+    "Distance (km)": Math.round(entry.distance * 10) / 10,
     "Duration (hrs)": Number((entry.duration / 3600).toFixed(1)),
   }));
 
   return (
-    <ResponsiveContainer width="100%" height={300}>
+    <ResponsiveContainer width="100%" height={280}>
       <LineChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
-        <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-        <XAxis dataKey="date" className="text-xs fill-muted-foreground" />
-        <YAxis className="text-xs fill-muted-foreground" />
-        <Tooltip
-          contentStyle={{
-            backgroundColor: "hsl(var(--background))",
-            border: "1px solid hsl(var(--border))",
-            borderRadius: "6px",
-          }}
+        <CartesianGrid strokeDasharray="3 3" className="stroke-muted" vertical={false} />
+        <XAxis
+          dataKey="date"
+          tick={{ fontSize: 11 }}
+          className="fill-muted-foreground"
+          tickLine={false}
+          axisLine={false}
         />
-        <Legend />
-        <Line type="monotone" dataKey="Sessions" stroke="hsl(221.2 83.2% 53.3%)" strokeWidth={2} dot={false} />
-        <Line type="monotone" dataKey="Distance (km)" stroke="hsl(142.1 76.2% 36.3%)" strokeWidth={2} dot={false} />
-        <Line type="monotone" dataKey="Duration (hrs)" stroke="hsl(346.8 77.2% 49.8%)" strokeWidth={2} dot={false} />
+        <YAxis
+          tick={{ fontSize: 11 }}
+          className="fill-muted-foreground"
+          tickLine={false}
+          axisLine={false}
+          width={30}
+        />
+        <Tooltip content={<CustomTooltip />} cursor={{ stroke: "hsl(var(--muted-foreground))", strokeWidth: 1, strokeDasharray: "4 4" }} />
+        <Legend
+          wrapperStyle={{ fontSize: 12, paddingTop: 12 }}
+          iconType="circle"
+          iconSize={8}
+        />
+        <Line
+          type="monotone"
+          dataKey="Sessions"
+          stroke="hsl(221.2 83.2% 53.3%)"
+          strokeWidth={2}
+          dot={false}
+          activeDot={{ r: 4, strokeWidth: 0 }}
+        />
+        <Line
+          type="monotone"
+          dataKey="Distance (km)"
+          stroke="hsl(142.1 76.2% 36.3%)"
+          strokeWidth={2}
+          dot={false}
+          activeDot={{ r: 4, strokeWidth: 0 }}
+        />
+        <Line
+          type="monotone"
+          dataKey="Duration (hrs)"
+          stroke="hsl(346.8 77.2% 49.8%)"
+          strokeWidth={2}
+          dot={false}
+          activeDot={{ r: 4, strokeWidth: 0 }}
+        />
       </LineChart>
     </ResponsiveContainer>
   );

@@ -1,73 +1,166 @@
 "use client";
 
+import { useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { useOrgSummary, useTopPerformers, useSessionTrend, useLeaderboard } from "@/hooks/queries/useAnalytics";
+import { useOrgSummary, useSessionTrend, useLeaderboard } from "@/hooks/queries/useAnalytics";
 import { useMyDashboard } from "@/hooks/queries/useDashboard";
-import { SummaryCards } from "@/components/charts/SummaryCards";
-import { TopPerformersChart } from "@/components/charts/TopPerformersChart";
+import { useMyProfile } from "@/hooks/queries/useProfile";
+import { MetricCard } from "@/components/MetricCard";
+import { ActivityBadge } from "@/components/ActivityBadge";
 import { SessionTrendChart } from "@/components/charts/SessionTrendChart";
 import { LeaderboardTable } from "@/components/charts/LeaderboardTable";
 import { ErrorBanner } from "@/components/ErrorBanner";
-import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatCurrency, formatDistance } from "@/lib/utils";
-import { Activity, MapPin, Clock, Receipt, CheckCircle } from "lucide-react";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Skeleton } from "@/components/ui/skeleton";
+import { formatDistance, formatDuration, formatCurrency } from "@/lib/utils";
+import { Activity, MapPin, Clock, Receipt, Users, TrendingUp, Trophy } from "lucide-react";
+import Link from "next/link";
+import type { OrgSummaryData } from "@/types";
 
-function EmployeeDashboard() {
-  const { data, isLoading, error } = useMyDashboard();
+// ─── Admin dashboard ───────────────────────────────────────────────────────────
 
-  if (isLoading) return <LoadingSkeleton variant="card" />;
-  if (error) return <ErrorBanner error={error} />;
-  if (!data) return null;
-
-  const stats = [
-    { title: "Sessions This Week", value: data.sessionsThisWeek.toLocaleString("en-IN"), icon: <Activity className="h-4 w-4" /> },
-    { title: "Distance This Week", value: formatDistance(data.distanceThisWeek), icon: <MapPin className="h-4 w-4" /> },
-    { title: "Hours Worked", value: `${data.hoursThisWeek.toFixed(1)} hrs`, icon: <Clock className="h-4 w-4" /> },
-    { title: "Expenses Submitted", value: data.expensesSubmitted.toLocaleString("en-IN"), icon: <Receipt className="h-4 w-4" /> },
-    { title: "Expenses Approved", value: data.expensesApproved.toLocaleString("en-IN"), icon: <CheckCircle className="h-4 w-4" /> },
+function OrgSummarySection({ summary, isLoading }: { summary?: OrgSummaryData; isLoading: boolean }) {
+  const cards = [
+    {
+      title: "Total Sessions",
+      value: summary?.totalSessions.toLocaleString() ?? "—",
+      icon: <Activity className="h-4 w-4" />,
+    },
+    {
+      title: "Total Distance",
+      value: summary ? formatDistance(summary.totalDistanceKm) : "—",
+      icon: <MapPin className="h-4 w-4" />,
+    },
+    {
+      title: "Total Duration",
+      value: summary ? formatDuration(summary.totalDurationSeconds) : "—",
+      icon: <Clock className="h-4 w-4" />,
+    },
+    {
+      title: "Active Employees",
+      value: summary?.activeEmployeesCount.toLocaleString() ?? "—",
+      icon: <Users className="h-4 w-4" />,
+      highlighted: true,
+    },
+    {
+      title: "Approved Expenses",
+      value: summary ? formatCurrency(summary.approvedExpenseAmount) : "—",
+      icon: <Receipt className="h-4 w-4" />,
+    },
   ];
 
   return (
-    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-      {stats.map((s) => (
-        <Card key={s.title}>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">{s.title}</CardTitle>
-            <div className="text-muted-foreground">{s.icon}</div>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{s.value}</div>
-          </CardContent>
-        </Card>
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      {cards.map((card) => (
+        <MetricCard
+          key={card.title}
+          title={card.title}
+          value={card.value}
+          icon={card.icon}
+          highlighted={card.highlighted}
+          isLoading={isLoading}
+        />
       ))}
     </div>
   );
 }
 
-function AdminDashboard() {
-  const summary = useOrgSummary();
-  const topByDistance = useTopPerformers("distance", 10);
-  const sessionTrend = useSessionTrend();
-  const leaderboard = useLeaderboard("distance", 10);
+type LeaderboardMetric = "distance" | "sessions" | "duration" | "expenses";
+
+function AdminLeaderboardSection() {
+  const [metric, setMetric] = useState<LeaderboardMetric>("distance");
+  const { data, isLoading, error } = useLeaderboard(metric, 10);
 
   return (
-    <>
+    <Card>
+      <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <CardTitle className="flex items-center gap-2">
+          <Trophy className="h-5 w-5 text-amber-500" />
+          Employee Leaderboard
+        </CardTitle>
+        <Tabs value={metric} onValueChange={(v) => setMetric(v as LeaderboardMetric)}>
+          <TabsList className="h-8">
+            <TabsTrigger value="distance" className="text-xs px-2">Distance</TabsTrigger>
+            <TabsTrigger value="sessions" className="text-xs px-2">Sessions</TabsTrigger>
+            <TabsTrigger value="duration" className="text-xs px-2">Duration</TabsTrigger>
+            <TabsTrigger value="expenses" className="text-xs px-2">Expenses</TabsTrigger>
+          </TabsList>
+        </Tabs>
+      </CardHeader>
+      <CardContent>
+        {error && <ErrorBanner error={error} />}
+        {isLoading ? (
+          <div className="space-y-3">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <Skeleton key={i} className="h-10 w-full" />
+            ))}
+          </div>
+        ) : (
+          <LeaderboardTable data={data ?? []} metric={metric} />
+        )}
+        <div className="mt-4 text-right">
+          <Link href="/leaderboard" className="text-xs text-primary hover:underline">
+            View full leaderboard →
+          </Link>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ActivitySnapshotSection({ summary }: { summary?: OrgSummaryData }) {
+  if (!summary) return null;
+
+  const total = summary.activeEmployeesCount;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Activity className="h-4 w-4" />
+          Activity Snapshot
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex items-center justify-between">
+          <ActivityBadge status="ACTIVE" />
+          <span className="font-semibold tabular-nums">{total}</span>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Employees active in the past 24 hours.
+        </p>
+        <div className="mt-2 pt-2 border-t text-xs text-muted-foreground">
+          Total expenses: {summary.totalExpenses.toLocaleString()} &bull; Approved:{" "}
+          {formatCurrency(summary.approvedExpenseAmount)}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function AdminDashboard() {
+  const summary = useOrgSummary();
+  const sessionTrend = useSessionTrend();
+
+  return (
+    <div className="space-y-6">
       {summary.error && <ErrorBanner error={summary.error} />}
 
-      {summary.isLoading ? (
-        <LoadingSkeleton variant="card" />
-      ) : summary.data ? (
-        <SummaryCards summary={summary.data} />
-      ) : null}
+      {/* Org summary cards */}
+      <OrgSummarySection summary={summary.data} isLoading={summary.isLoading} />
 
+      {/* Session trend chart */}
       <Card>
         <CardHeader>
-          <CardTitle>Session Trend</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            <TrendingUp className="h-5 w-5 text-primary" />
+            Session Trend
+          </CardTitle>
         </CardHeader>
         <CardContent>
           {sessionTrend.isLoading ? (
-            <LoadingSkeleton variant="card" />
+            <Skeleton className="h-[280px] w-full" />
           ) : sessionTrend.error ? (
             <ErrorBanner error={sessionTrend.error} />
           ) : (
@@ -76,38 +169,136 @@ function AdminDashboard() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Top Performers by Distance</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {topByDistance.isLoading ? (
-            <LoadingSkeleton variant="card" />
-          ) : topByDistance.error ? (
-            <ErrorBanner error={topByDistance.error} />
-          ) : (
-            <TopPerformersChart data={topByDistance.data ?? []} metric="distance" />
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Employee Leaderboard</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {leaderboard.isLoading ? (
-            <LoadingSkeleton variant="card" />
-          ) : leaderboard.error ? (
-            <ErrorBanner error={leaderboard.error} />
-          ) : (
-            <LeaderboardTable data={leaderboard.data ?? []} metric="distance" />
-          )}
-        </CardContent>
-      </Card>
-    </>
+      {/* Leaderboard + Activity snapshot */}
+      <div className="grid gap-6 lg:grid-cols-3">
+        <div className="lg:col-span-2">
+          <AdminLeaderboardSection />
+        </div>
+        <div>
+          <ActivitySnapshotSection summary={summary.data} />
+        </div>
+      </div>
+    </div>
   );
 }
+
+// ─── Employee dashboard ────────────────────────────────────────────────────────
+
+function EmployeeDashboard() {
+  const { data: dashboard, isLoading: dashLoading, error: dashError } = useMyDashboard();
+  const { data: profile, isLoading: profileLoading } = useMyProfile();
+  const { data: leaderboard, isLoading: lbLoading } = useLeaderboard("distance", 10);
+
+  const myRank = profile
+    ? leaderboard?.find((e) => e.employeeId === profile.id)?.rank
+    : undefined;
+
+  const isLoading = dashLoading || profileLoading;
+
+  if (dashError) return <ErrorBanner error={dashError} />;
+
+  const stats = dashboard
+    ? [
+        {
+          title: "Sessions This Week",
+          value: dashboard.sessionsThisWeek.toLocaleString(),
+          icon: <Activity className="h-4 w-4" />,
+        },
+        {
+          title: "Distance This Week",
+          value: formatDistance(dashboard.distanceThisWeek),
+          icon: <MapPin className="h-4 w-4" />,
+        },
+        {
+          title: "Hours Worked",
+          value: `${dashboard.hoursThisWeek.toFixed(1)} hrs`,
+          icon: <Clock className="h-4 w-4" />,
+        },
+        {
+          title: "Expenses Submitted",
+          value: dashboard.expensesSubmitted.toLocaleString(),
+          icon: <Receipt className="h-4 w-4" />,
+        },
+        {
+          title: "Expenses Approved",
+          value: dashboard.expensesApproved.toLocaleString(),
+          icon: <Receipt className="h-4 w-4" />,
+          highlighted: true,
+        },
+      ]
+    : [];
+
+  return (
+    <div className="space-y-6">
+      {/* Greeting + rank */}
+      {profile && (
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+          <div>
+            <p className="text-muted-foreground text-sm">
+              Welcome back, <span className="font-semibold text-foreground">{profile.name}</span>
+            </p>
+            <div className="mt-1 flex items-center gap-2">
+              <ActivityBadge status={profile.activityStatus} />
+            </div>
+          </div>
+          {myRank != null && (
+            <div className="flex items-center gap-2 rounded-xl border bg-amber-50 px-4 py-2 text-amber-700">
+              <Trophy className="h-5 w-5 text-amber-500" />
+              <div>
+                <p className="text-xs text-amber-600">Your Rank</p>
+                <p className="text-xl font-bold leading-none">#{myRank}</p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Weekly stats */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+        {stats.map((s) => (
+          <MetricCard
+            key={s.title}
+            title={s.title}
+            value={s.value}
+            icon={s.icon}
+            highlighted={s.highlighted}
+            isLoading={isLoading}
+          />
+        ))}
+      </div>
+
+      {/* Leaderboard preview */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Trophy className="h-4 w-4 text-amber-500" />
+            Distance Leaderboard
+          </CardTitle>
+          <Link href="/leaderboard" className="text-xs text-primary hover:underline">
+            Full leaderboard →
+          </Link>
+        </CardHeader>
+        <CardContent>
+          {lbLoading ? (
+            <div className="space-y-3">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <Skeleton key={i} className="h-10 w-full" />
+              ))}
+            </div>
+          ) : (
+            <LeaderboardTable
+              data={(leaderboard ?? []).slice(0, 5)}
+              metric="distance"
+              highlightEmployeeId={profile?.id}
+            />
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
   const { permissions } = useAuth();
@@ -116,10 +307,10 @@ export default function DashboardPage() {
     <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-bold tracking-tight">Dashboard</h2>
-        <p className="text-muted-foreground">
+        <p className="text-muted-foreground text-sm">
           {permissions.viewAnalytics
             ? "Organization overview and key metrics."
-            : "Your personal activity summary."}
+            : "Your personal activity summary for the week."}
         </p>
       </div>
 
