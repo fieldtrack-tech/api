@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
+import type { Expense } from "@fieldtrack/types";
 import { authenticate } from "../../middleware/auth.js";
 import { requireRole } from "../../middleware/role-guard.js";
 import { expensesController } from "./expenses.controller.js";
@@ -9,16 +10,32 @@ import {
   updateExpenseStatusBodySchema,
 } from "./expenses.schema.js";
 
-const unknownObject = z.object({}).passthrough();
+const expenseItemSchema: z.ZodType<Expense> = z.object({
+  id: z.string(),
+  employee_id: z.string(),
+  organization_id: z.string(),
+  amount: z.number(),
+  description: z.string(),
+  status: z.enum(["PENDING", "APPROVED", "REJECTED"]),
+  receipt_url: z.string().nullable(),
+  submitted_at: z.string(),
+  reviewed_at: z.string().nullable(),
+  reviewed_by: z.string().nullable(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  // Enriched fields — present on list queries
+  employee_code: z.string().nullable().optional(),
+  employee_name: z.string().nullable().optional(),
+});
 
 const singleExpenseResponseSchema = z.object({
   success: z.literal(true),
-  data: unknownObject,
+  data: expenseItemSchema,
 });
 
 const expenseListResponseSchema = z.object({
   success: z.literal(true),
-  data: z.array(unknownObject),
+  data: z.array(expenseItemSchema),
 });
 
 /**

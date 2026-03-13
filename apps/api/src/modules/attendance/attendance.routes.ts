@@ -1,21 +1,37 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
+import type { AttendanceSession } from "@fieldtrack/types";
 import { authenticate } from "../../middleware/auth.js";
 import { requireRole } from "../../middleware/role-guard.js";
 import { attendanceController } from "./attendance.controller.js";
 import { sessionSummaryController } from "../session_summary/session_summary.controller.js";
 import { paginationSchema } from "./attendance.schema.js";
 
-const unknownObject = z.object({}).passthrough();
+const sessionItemSchema: z.ZodType<AttendanceSession> = z.object({
+  id: z.string(),
+  employee_id: z.string(),
+  organization_id: z.string(),
+  checkin_at: z.string(),
+  checkout_at: z.string().nullable(),
+  distance_recalculation_status: z.string(),
+  total_distance_km: z.number().nullable(),
+  total_duration_seconds: z.number().nullable(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  // Enriched fields — present on list queries, optional on single-session responses
+  employee_code: z.string().nullable().optional(),
+  employee_name: z.string().nullable().optional(),
+  activityStatus: z.enum(["ACTIVE", "RECENT", "INACTIVE"]).optional(),
+});
 
 const singleObjectResponseSchema = z.object({
   success: z.literal(true),
-  data: unknownObject,
+  data: sessionItemSchema,
 });
 
 const sessionListResponseSchema = z.object({
   success: z.literal(true),
-  data: z.array(unknownObject),
+  data: z.array(sessionItemSchema),
 });
 
 /**

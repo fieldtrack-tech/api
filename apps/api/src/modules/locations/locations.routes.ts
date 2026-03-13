@@ -34,7 +34,7 @@ const locationListResponseSchema = z.object({
 
 const batchLocationResponseSchema = z.object({
     success: z.literal(true),
-    inserted: z.unknown(),
+    inserted: z.number(),
 });
 
 /**

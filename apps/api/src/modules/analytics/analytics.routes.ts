@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import type { OrgSummaryData, TopPerformerEntry, UserSummaryData } from "@fieldtrack/types";
 import { authenticate } from "../../middleware/auth.js";
 import { requireRole } from "../../middleware/role-guard.js";
 import { analyticsController } from "./analytics.controller.js";
@@ -19,14 +20,20 @@ const orgSummaryResponseSchema = z.object({
     approvedExpenseAmount: z.number(),
     rejectedExpenseAmount: z.number(),
     activeEmployeesCount: z.number(),
-  }),
+  }) satisfies z.ZodType<OrgSummaryData>,
 });
 
-const unknownObject = z.object({}).passthrough();
+const topPerformerItemSchema: z.ZodType<TopPerformerEntry> = z.object({
+  employeeId: z.string(),
+  employeeName: z.string(),
+  totalDistanceKm: z.number().optional(),
+  totalDurationSeconds: z.number().optional(),
+  sessionsCount: z.number().optional(),
+});
 
 const topPerformersResponseSchema = z.object({
   success: z.literal(true),
-  data: z.array(unknownObject),
+  data: z.array(topPerformerItemSchema),
 });
 
 const userSummaryResponseSchema = z.object({
@@ -39,7 +46,7 @@ const userSummaryResponseSchema = z.object({
     approvedExpenseAmount: z.number(),
     averageDistancePerSession: z.number(),
     averageSessionDurationSeconds: z.number(),
-  }),
+  }) satisfies z.ZodType<UserSummaryData>,
 });
 
 /**

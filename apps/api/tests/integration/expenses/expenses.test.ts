@@ -44,6 +44,8 @@ const pendingExpense = {
   description: "Office supplies",
   status: "PENDING",
   receipt_url: null,
+  submitted_at: new Date().toISOString(),
+  reviewed_at: null,
   reviewed_by: null,
   created_at: new Date().toISOString(),
   updated_at: new Date().toISOString(),
