@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
-import { useOrgExpenses, useUpdateExpenseStatus } from "@/hooks/queries/useExpenses";
+import { useAllOrgExpenses, useUpdateExpenseStatus } from "@/hooks/queries/useExpenses";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { EmployeeIdentity } from "@/components/EmployeeIdentity";
 import { Badge } from "@/components/ui/badge";
@@ -22,7 +22,6 @@ import { motion, AnimatePresence } from "framer-motion";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const FETCH_LIMIT = 200;
 const VIEW_PAGE_SIZE = 25;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -273,10 +272,8 @@ export default function AdminExpensesPage() {
     if (!permissions.manageExpenses) router.replace("/sessions");
   }, [permissions, router]);
 
-  const { data, isLoading, error } = useOrgExpenses(1, FETCH_LIMIT);
+  const { data: allExpenses, isLoading, error } = useAllOrgExpenses();
   const updateStatus = useUpdateExpenseStatus();
-
-  const allExpenses = data?.data ?? [];
   const groups = useMemo(() => groupExpenses(allExpenses), [allExpenses]);
 
   // Keep the open sheet in sync with fresh data after mutations

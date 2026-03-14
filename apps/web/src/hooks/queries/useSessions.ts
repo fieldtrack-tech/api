@@ -1,6 +1,7 @@
 "use client";
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, useInfiniteQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { apiGetPaginated } from "@/lib/api/client";
 import { API } from "@/lib/api/endpoints";
 import { AttendanceSession, PaginatedResponse } from "@/types";
@@ -25,6 +26,40 @@ export function useOrgSessions(page: number, limit: number) {
         limit: String(limit),
       }),
   });
+}
+
+/**
+ * Fetches ALL org sessions across all pages (limit=100 per page).
+ * Auto-fetches subsequent pages until the entire dataset is loaded.
+ * Returns a flat array of all sessions for client-side grouping.
+ */
+export function useAllOrgSessions() {
+  const query = useInfiniteQuery<PaginatedResponse<AttendanceSession>, Error, AttendanceSession[], [string], number>({
+    queryKey: ["orgSessionsAll"],
+    queryFn: ({ pageParam }) =>
+      apiGetPaginated<AttendanceSession>(API.orgSessions, {
+        page: String(pageParam),
+        limit: "100",
+      }),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage, allPages) => {
+      const fetched = allPages.reduce((sum, p) => sum + p.data.length, 0);
+      return fetched < lastPage.pagination.total ? allPages.length + 1 : undefined;
+    },
+    select: (data) => data.pages.flatMap((p) => p.data),
+  });
+
+  useEffect(() => {
+    if (query.hasNextPage && !query.isFetchingNextPage) {
+      void query.fetchNextPage();
+    }
+  }, [query.hasNextPage, query.isFetchingNextPage, query.fetchNextPage]);
+
+  return {
+    data: query.data ?? [],
+    isLoading: query.isLoading || query.hasNextPage === true,
+    error: query.error,
+  };
 }
 
 /**

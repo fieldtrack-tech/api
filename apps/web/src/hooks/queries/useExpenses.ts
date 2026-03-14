@@ -1,6 +1,7 @@
 "use client";
 
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, useInfiniteQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { apiGetPaginated, apiPatch, apiPost } from "@/lib/api/client";
 import { API } from "@/lib/api/endpoints";
 import { Expense, PaginatedResponse, ExpenseStatus } from "@/types";
@@ -33,6 +34,40 @@ export function useOrgExpenses(page: number, limit: number) {
   });
 }
 
+/**
+ * Fetches ALL org expenses across all pages (limit=100 per page).
+ * Auto-fetches subsequent pages until the entire dataset is loaded.
+ * Returns a flat array of all expenses for client-side grouping.
+ */
+export function useAllOrgExpenses() {
+  const query = useInfiniteQuery<PaginatedResponse<Expense>, Error, Expense[], [string], number>({
+    queryKey: ["orgExpensesAll"],
+    queryFn: ({ pageParam }) =>
+      apiGetPaginated<Expense>(API.orgExpenses, {
+        page: String(pageParam),
+        limit: "100",
+      }),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage, allPages) => {
+      const fetched = allPages.reduce((sum, p) => sum + p.data.length, 0);
+      return fetched < lastPage.pagination.total ? allPages.length + 1 : undefined;
+    },
+    select: (data) => data.pages.flatMap((p) => p.data),
+  });
+
+  useEffect(() => {
+    if (query.hasNextPage && !query.isFetchingNextPage) {
+      void query.fetchNextPage();
+    }
+  }, [query.hasNextPage, query.isFetchingNextPage, query.fetchNextPage]);
+
+  return {
+    data: query.data ?? [],
+    isLoading: query.isLoading || query.hasNextPage === true,
+    error: query.error,
+  };
+}
+
 export function useCreateExpense() {
   const client = useQueryClient();
 
@@ -52,6 +87,7 @@ export function useUpdateExpenseStatus() {
       apiPatch<Expense>(API.expenseStatus(id), { status }),
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: ["orgExpenses"] });
+      void client.invalidateQueries({ queryKey: ["orgExpensesAll"] });
     },
   });
 }

@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
-import { useOrgSessions } from "@/hooks/queries/useSessions";
+import { useAllOrgSessions } from "@/hooks/queries/useSessions";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { EmployeeIdentity } from "@/components/EmployeeIdentity";
 import { Badge } from "@/components/ui/badge";
@@ -20,7 +20,6 @@ import { motion, AnimatePresence } from "framer-motion";
 
 // --- Constants ----------------------------------------------------------------
 
-const FETCH_LIMIT = 200;
 const VIEW_PAGE_SIZE = 25;
 
 // --- Types --------------------------------------------------------------------
@@ -260,8 +259,7 @@ export default function AdminSessionsPage() {
     if (!permissions.viewOrgSessions) router.replace("/sessions");
   }, [permissions, router]);
 
-  const { data, isLoading, error } = useOrgSessions(1, FETCH_LIMIT);
-  const allSessions = data?.data ?? [];
+  const { data: allSessions, isLoading, error } = useAllOrgSessions();
   const groups = useMemo(() => groupSessions(allSessions), [allSessions]);
 
   const tabCounts = useMemo(() => {
