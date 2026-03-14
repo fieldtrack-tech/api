@@ -238,7 +238,7 @@ export const attendanceRepository = {
     }
 
     const { data, error, count } = await query
-      .order("status_priority", { ascending: true })
+      .order("status", { ascending: true })
       .order("updated_at", { ascending: false })
       .range(safeOffset, safeOffset + safeLimit - 1);
 

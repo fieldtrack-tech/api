@@ -67,7 +67,7 @@ export async function adminMapRoutes(app: FastifyInstance): Promise<void> {
           .from("employee_latest_sessions")
           .select("employee_id, employee_name, employee_code, status, session_id")
           .eq("organization_id", orgId)
-          .order("status_priority", { ascending: true });
+          .order("status", { ascending: true });
 
         if (snapError) {
           throw new Error(`Map: snapshot query failed: ${snapError.message}`);
