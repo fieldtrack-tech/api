@@ -1,7 +1,8 @@
-"use client";
+﻿"use client";
 
-import { useState, useMemo } from "react";
-import { motion } from "framer-motion";
+import { useState, useMemo, useEffect } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { useOrgSummary, useLeaderboard } from "@/hooks/queries/useAnalytics";
 import { useMyDashboard } from "@/hooks/queries/useDashboard";
@@ -17,7 +18,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatDistance, formatDuration, formatCurrency, formatTime } from "@/lib/utils";
-import { Activity, MapPin, Clock, Receipt, Users, Trophy, Zap } from "lucide-react";
+import { Activity, MapPin, Clock, Receipt, Users, Trophy, Zap, LogIn, LogOut, CheckCircle2, XCircle } from "lucide-react";
 import Link from "next/link";
 import type { OrgSummaryData, DashboardSummary, EmployeeProfileData } from "@/types";
 import { EmployeeIdentity } from "@/components/EmployeeIdentity";
@@ -269,23 +270,157 @@ function AdminLeaderboardSection({ from, to }: { from: string; to: string }) {
   );
 }
 
-// ─── Team Activity Widget ─────────────────────────────────────────────────────
+// ─── Live Activity Feed ───────────────────────────────────────────────────────
 
-// ─── Today Activity Feed ──────────────────────────────────────────────────────
+// Avatar gradient helpers (feed-local, mirrors EmployeeIdentity palette)
+const FEED_PALETTE = [
+  "from-blue-500 to-indigo-600",
+  "from-violet-500 to-purple-600",
+  "from-emerald-500 to-teal-600",
+  "from-rose-500 to-pink-600",
+  "from-cyan-500 to-blue-600",
+  "from-fuchsia-500 to-violet-600",
+  "from-amber-500 to-orange-600",
+  "from-teal-500 to-cyan-600",
+];
+function feedGradient(name: string): string {
+  const s = Array.from(name).reduce((a, c) => a + c.charCodeAt(0), 0);
+  return FEED_PALETTE[s % FEED_PALETTE.length];
+}
+function feedInitials(name: string): string {
+  return name.trim().split(/\s+/).slice(0, 2).map((w) => w[0] ?? "").join("").toUpperCase();
+}
 
-type FeedIcon = "checkin" | "checkout" | "expense";
-type FeedEntry = {
+type ActivityEventType =
+  | "SESSION_CHECKIN"
+  | "SESSION_CHECKOUT"
+  | "EXPENSE_SUBMITTED"
+  | "EXPENSE_APPROVED"
+  | "EXPENSE_REJECTED";
+
+interface ActivityFeedEntry {
   id: string;
+  eventType: ActivityEventType;
+  employeeId: string;
   name: string;
   action: string;
+  detail?: string;
   time: string;
   ts: number;
-  icon: FeedIcon;
+  href: string;
+}
+
+const EVENT_CONFIG: Record<
+  ActivityEventType,
+  { bg: string; fg: string; dot: string; Icon: React.ElementType }
+> = {
+  SESSION_CHECKIN: {
+    bg: "bg-emerald-100 dark:bg-emerald-950/40",
+    fg: "text-emerald-600 dark:text-emerald-400",
+    dot: "bg-emerald-500",
+    Icon: LogIn,
+  },
+  SESSION_CHECKOUT: {
+    bg: "bg-blue-100 dark:bg-blue-950/40",
+    fg: "text-blue-600 dark:text-blue-400",
+    dot: "bg-blue-500",
+    Icon: LogOut,
+  },
+  EXPENSE_SUBMITTED: {
+    bg: "bg-orange-100 dark:bg-orange-950/40",
+    fg: "text-orange-600 dark:text-orange-400",
+    dot: "bg-orange-500",
+    Icon: Receipt,
+  },
+  EXPENSE_APPROVED: {
+    bg: "bg-emerald-100 dark:bg-emerald-950/40",
+    fg: "text-emerald-600 dark:text-emerald-400",
+    dot: "bg-emerald-500",
+    Icon: CheckCircle2,
+  },
+  EXPENSE_REJECTED: {
+    bg: "bg-rose-100 dark:bg-rose-950/40",
+    fg: "text-rose-600 dark:text-rose-400",
+    dot: "bg-rose-500",
+    Icon: XCircle,
+  },
 };
 
+function ActivityFeedItem({
+  entry,
+  index,
+}: {
+  entry: ActivityFeedEntry;
+  index: number;
+}) {
+  const cfg = EVENT_CONFIG[entry.eventType];
+  const { Icon } = cfg;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2, delay: index * 0.03, ease: "easeOut" }}
+    >
+      <Link
+        href={entry.href}
+        className="flex items-center gap-3 rounded-xl px-3 py-2.5 hover:bg-accent/60 active:bg-accent/80 transition-colors group"
+      >
+        {/* Avatar + event-type badge */}
+        <div className="relative shrink-0">
+          <div
+            className={cn(
+              "flex h-9 w-9 items-center justify-center rounded-full",
+              "bg-gradient-to-br text-white text-xs font-bold shadow-sm",
+              feedGradient(entry.name)
+            )}
+          >
+            {feedInitials(entry.name)}
+          </div>
+          <div
+            className={cn(
+              "absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full ring-2 ring-background",
+              cfg.bg
+            )}
+          >
+            <Icon className={cn("h-2.5 w-2.5", cfg.fg)} />
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm leading-snug">
+            <span className="font-semibold group-hover:text-primary transition-colors">
+              {entry.name}
+            </span>{" "}
+            <span className="text-muted-foreground">{entry.action}</span>
+            {entry.detail && (
+              <span className="font-medium text-foreground"> · {entry.detail}</span>
+            )}
+          </p>
+          <p className="mt-0.5 text-xs text-muted-foreground/70">{entry.time}</p>
+        </div>
+
+        {/* Event type dot */}
+        <div className={cn("h-2 w-2 shrink-0 rounded-full opacity-70", cfg.dot)} />
+      </Link>
+    </motion.div>
+  );
+}
+
 function TodayActivityFeed() {
-  const sessions = useOrgSessions(1, 20);
-  const expenses = useOrgExpenses(1, 10);
+  const queryClient = useQueryClient();
+  const sessions = useOrgSessions(1, 50);
+  const expenses = useOrgExpenses(1, 50);
+
+  // Auto-refresh every 30 s so the feed stays live without a page reload
+  useEffect(() => {
+    const id = setInterval(() => {
+      void queryClient.invalidateQueries({ queryKey: ["orgSessions"] });
+      void queryClient.invalidateQueries({ queryKey: ["orgExpenses"] });
+    }, 30_000);
+    return () => clearInterval(id);
+  }, [queryClient]);
 
   const today = useMemo(() => {
     const d = new Date();
@@ -293,101 +428,162 @@ function TodayActivityFeed() {
     return d;
   }, []);
 
-  const feed = useMemo<FeedEntry[]>(() => {
-    const entries: FeedEntry[] = [];
+  const feed = useMemo<ActivityFeedEntry[]>(() => {
+    const entries: ActivityFeedEntry[] = [];
 
     for (const s of sessions.data?.data ?? []) {
-      const t = new Date(s.checkin_at);
-      if (t < today) continue;
-      entries.push({
-        id: s.id,
-        name: s.employee_name ?? "Unknown",
-        action: s.checkout_at ? "completed a session" : "checked in",
-        time: formatTime(s.checkin_at),
-        ts: t.getTime(),
-        icon: s.checkout_at ? "checkout" : "checkin",
-      });
+      const name = s.employee_name ?? "Unknown";
+
+      // Session check-in
+      const checkinTs = new Date(s.checkin_at);
+      if (checkinTs >= today) {
+        entries.push({
+          id: `checkin-${s.id}`,
+          eventType: "SESSION_CHECKIN",
+          employeeId: s.employee_id,
+          name,
+          action: "checked in",
+          time: formatTime(s.checkin_at),
+          ts: checkinTs.getTime(),
+          href: "/admin/sessions",
+        });
+      }
+
+      // Session check-out
+      if (s.checkout_at) {
+        const checkoutTs = new Date(s.checkout_at);
+        if (checkoutTs >= today) {
+          entries.push({
+            id: `checkout-${s.id}`,
+            eventType: "SESSION_CHECKOUT",
+            employeeId: s.employee_id,
+            name,
+            action: "completed session",
+            detail:
+              s.total_duration_seconds != null
+                ? formatDuration(s.total_duration_seconds)
+                : undefined,
+            time: formatTime(s.checkout_at),
+            ts: checkoutTs.getTime(),
+            href: "/admin/sessions",
+          });
+        }
+      }
     }
 
     for (const e of expenses.data?.data ?? []) {
-      const t = new Date(e.submitted_at);
-      if (t < today) continue;
-      entries.push({
-        id: e.id,
-        name: e.employee_name ?? "Unknown",
-        action: `submitted ${formatCurrency(e.amount)} expense`,
-        time: formatTime(e.submitted_at),
-        ts: t.getTime(),
-        icon: "expense",
-      });
+      const name = e.employee_name ?? "Unknown";
+
+      // Expense submitted
+      const submittedTs = new Date(e.submitted_at);
+      if (submittedTs >= today) {
+        entries.push({
+          id: `expense-sub-${e.id}`,
+          eventType: "EXPENSE_SUBMITTED",
+          employeeId: e.employee_id,
+          name,
+          action: "submitted expense",
+          detail: formatCurrency(e.amount),
+          time: formatTime(e.submitted_at),
+          ts: submittedTs.getTime(),
+          href: "/admin/expenses",
+        });
+      }
+
+      // Expense reviewed (approved / rejected)
+      if (e.reviewed_at && (e.status === "APPROVED" || e.status === "REJECTED")) {
+        const reviewedTs = new Date(e.reviewed_at);
+        if (reviewedTs >= today) {
+          entries.push({
+            id: `expense-review-${e.id}`,
+            eventType:
+              e.status === "APPROVED" ? "EXPENSE_APPROVED" : "EXPENSE_REJECTED",
+            employeeId: e.employee_id,
+            name,
+            action:
+              e.status === "APPROVED" ? "expense approved" : "expense rejected",
+            detail: formatCurrency(e.amount),
+            time: formatTime(e.reviewed_at),
+            ts: reviewedTs.getTime(),
+            href: "/admin/expenses",
+          });
+        }
+      }
     }
 
-    return entries.sort((a, b) => b.ts - a.ts).slice(0, 10);
+    return entries.sort((a, b) => b.ts - a.ts).slice(0, 20);
   }, [sessions.data, expenses.data, today]);
 
-  const isLoading = sessions.isLoading || expenses.isLoading;
+  const isLoading = sessions.isLoading && expenses.isLoading;
 
   return (
-    <Card className="h-full">
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-sm font-semibold">
-          <Activity className="h-4 w-4 text-primary" />
-          Today&apos;s Activity
-        </CardTitle>
+    <Card className="flex h-full flex-col">
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between">
+          <CardTitle className="flex items-center gap-2">
+            <Activity className="h-5 w-5 text-primary" />
+            Today&apos;s Activity
+          </CardTitle>
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+            </span>
+            Live
+          </div>
+        </div>
       </CardHeader>
-      <CardContent className="pb-5">
+
+      <CardContent className="flex-1 overflow-y-auto px-3 pb-2">
         {isLoading ? (
-          <div className="space-y-4">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="flex items-start gap-3 animate-pulse">
-                <div className="h-8 w-8 rounded-full bg-muted shrink-0" />
-                <div className="space-y-1.5 flex-1 pt-1">
-                  <div className="h-3 w-3/4 rounded bg-muted" />
+          <div className="space-y-1 pt-1">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div
+                key={i}
+                className="flex animate-pulse items-center gap-3 rounded-xl px-3 py-2.5"
+              >
+                <div className="h-9 w-9 shrink-0 rounded-full bg-muted" />
+                <div className="flex-1 space-y-1.5">
+                  <div className="h-3.5 w-3/4 rounded bg-muted" />
                   <div className="h-2.5 w-1/3 rounded bg-muted" />
                 </div>
               </div>
             ))}
           </div>
         ) : feed.length === 0 ? (
-          <EmptyState
-            icon={Activity}
-            title="No activity yet today"
-            description="Field activity will appear here as employees check in."
-          />
-        ) : (
-          <div className="space-y-3">
-            {feed.map((entry, idx) => (
-              <motion.div
-                key={entry.id}
-                initial={{ opacity: 0, x: -8 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ duration: 0.2, delay: idx * 0.04 }}
-                className="flex items-start gap-3"
-              >
-                <div
-                  className={cn(
-                    "flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
-                    entry.icon === "checkin" && "bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600",
-                    entry.icon === "checkout" && "bg-blue-100 dark:bg-blue-950/40 text-blue-600",
-                    entry.icon === "expense" && "bg-amber-100 dark:bg-amber-950/40 text-amber-600",
-                  )}
-                >
-                  {entry.icon === "checkin" && <MapPin className="h-3.5 w-3.5" />}
-                  {entry.icon === "checkout" && <Activity className="h-3.5 w-3.5" />}
-                  {entry.icon === "expense" && <Receipt className="h-3.5 w-3.5" />}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm leading-snug">
-                    <span className="font-semibold">{entry.name}</span>{" "}
-                    <span className="text-muted-foreground">{entry.action}</span>
-                  </p>
-                  <p className="text-xs text-muted-foreground/70 mt-0.5">{entry.time}</p>
-                </div>
-              </motion.div>
-            ))}
+          <div className="flex flex-col items-center justify-center py-12 text-center">
+            <Activity className="mb-3 h-10 w-10 text-muted-foreground/30" />
+            <p className="text-sm font-medium text-muted-foreground">
+              No activity yet today
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground/60">
+              Field events appear here as employees check in.
+            </p>
           </div>
+        ) : (
+          <AnimatePresence initial={false}>
+            <div className="space-y-0.5 pt-1">
+              {feed.map((entry, idx) => (
+                <ActivityFeedItem key={entry.id} entry={entry} index={idx} />
+              ))}
+            </div>
+          </AnimatePresence>
         )}
       </CardContent>
+
+      {!isLoading && feed.length > 0 && (
+        <div className="flex items-center justify-between border-t border-border/40 px-4 pb-3 pt-2">
+          <span className="text-xs text-muted-foreground">
+            {feed.length} event{feed.length !== 1 ? "s" : ""} today
+          </span>
+          <Link
+            href="/admin/sessions"
+            className="text-xs text-primary hover:underline"
+          >
+            All sessions →
+          </Link>
+        </div>
+      )}
     </Card>
   );
 }
