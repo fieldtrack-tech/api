@@ -89,7 +89,11 @@ export async function adminSessionsRoutes(app: FastifyInstance): Promise<void> {
           .status(200)
           .send(paginated(result.data, parsed.page, parsed.limit, result.total));
       } catch (error) {
-        handleError(error, request, reply, "Unexpected error fetching admin sessions");
+        // TEMP DEBUG: expose the actual error message
+        const msg = error instanceof Error ? error.message : String(error);
+        request.log.error({ err: error }, "admin/sessions handler error");
+        reply.status(500).send({ success: false, error: msg, requestId: request.id });
+        return;
       }
     },
   );
