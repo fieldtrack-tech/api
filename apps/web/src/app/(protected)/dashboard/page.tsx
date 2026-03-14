@@ -10,6 +10,7 @@ import { ActivityBadge } from "@/components/ActivityBadge";
 import { SessionTrendChart } from "@/components/charts/SessionTrendChart";
 import { LeaderboardTable } from "@/components/charts/LeaderboardTable";
 import { ErrorBanner } from "@/components/ErrorBanner";
+import { StaggerList, StaggerItem, FadeUp } from "@/components/motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -51,18 +52,19 @@ function OrgSummarySection({ summary, isLoading }: { summary?: OrgSummaryData; i
   ];
 
   return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+    <StaggerList className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
       {cards.map((card) => (
-        <MetricCard
-          key={card.title}
-          title={card.title}
-          value={card.value}
-          icon={card.icon}
-          highlighted={card.highlighted}
-          isLoading={isLoading}
-        />
+        <StaggerItem key={card.title}>
+          <MetricCard
+            title={card.title}
+            value={card.value}
+            icon={card.icon}
+            highlighted={card.highlighted}
+            isLoading={isLoading}
+          />
+        </StaggerItem>
       ))}
-    </div>
+    </StaggerList>
   );
 }
 
@@ -151,13 +153,14 @@ function AdminDashboard() {
       <OrgSummarySection summary={summary.data} isLoading={summary.isLoading} />
 
       {/* Session trend chart */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <TrendingUp className="h-5 w-5 text-primary" />
-            Session Trend
-          </CardTitle>
-        </CardHeader>
+      <FadeUp delay={0.15}>
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <TrendingUp className="h-5 w-5 text-primary" />
+              Session Trend
+            </CardTitle>
+          </CardHeader>
         <CardContent>
           {sessionTrend.isLoading ? (
             <Skeleton className="h-[280px] w-full" />
@@ -168,16 +171,19 @@ function AdminDashboard() {
           )}
         </CardContent>
       </Card>
+      </FadeUp>
 
       {/* Leaderboard + Activity snapshot */}
-      <div className="grid gap-6 lg:grid-cols-3">
-        <div className="lg:col-span-2">
-          <AdminLeaderboardSection />
+      <FadeUp delay={0.25}>
+        <div className="grid gap-6 lg:grid-cols-3">
+          <div className="lg:col-span-2">
+            <AdminLeaderboardSection />
+          </div>
+          <div>
+            <ActivitySnapshotSection summary={summary.data} />
+          </div>
         </div>
-        <div>
-          <ActivitySnapshotSection summary={summary.data} />
-        </div>
-      </div>
+      </FadeUp>
     </div>
   );
 }
@@ -254,18 +260,19 @@ function EmployeeDashboard() {
       )}
 
       {/* Weekly stats */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      <StaggerList className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         {stats.map((s) => (
-          <MetricCard
-            key={s.title}
-            title={s.title}
-            value={s.value}
-            icon={s.icon}
-            highlighted={s.highlighted}
-            isLoading={isLoading}
-          />
+          <StaggerItem key={s.title}>
+            <MetricCard
+              title={s.title}
+              value={s.value}
+              icon={s.icon}
+              highlighted={s.highlighted}
+              isLoading={isLoading}
+            />
+          </StaggerItem>
         ))}
-      </div>
+      </StaggerList>
 
       {/* Leaderboard preview */}
       <Card>

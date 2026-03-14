@@ -1,8 +1,9 @@
 "use client";
 
+import { motion } from "framer-motion";
 import { LeaderboardEntry } from "@/types";
 import { EmptyState } from "@/components/EmptyState";
-import { Trophy, Medal } from "lucide-react";
+import { Trophy } from "lucide-react";
 import { formatDistance, formatDuration, formatCurrency } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -102,19 +103,22 @@ export function LeaderboardTable({
           </tr>
         </thead>
         <tbody>
-          {data.map((entry) => {
+          {data.map((entry, idx) => {
             const isTop3 = entry.rank <= 3;
             const isHighlighted = entry.employeeId === highlightEmployeeId;
             const rowStyle = RANK_STYLES[entry.rank];
 
             return (
-              <tr
+              <motion.tr
                 key={entry.employeeId}
+                initial={{ opacity: 0, x: -8 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ duration: 0.25, delay: idx * 0.04, ease: "easeOut" }}
+                whileHover={{ backgroundColor: "hsl(var(--accent))" }}
                 className={cn(
-                  "border-b last:border-0 transition-colors",
+                  "border-b last:border-0 cursor-default",
                   isTop3 && rowStyle?.row,
-                  isHighlighted && "ring-1 ring-inset ring-primary/40 bg-primary/5",
-                  !isTop3 && !isHighlighted && "hover:bg-muted/30"
+                  isHighlighted && "ring-1 ring-inset ring-primary/40 bg-primary/5"
                 )}
               >
                 <td className="py-3 pr-3">
@@ -153,7 +157,7 @@ export function LeaderboardTable({
                     ? formatDuration(entry.duration)
                     : formatDistance(entry.distance)}
                 </td>
-              </tr>
+              </motion.tr>
             );
           })}
         </tbody>

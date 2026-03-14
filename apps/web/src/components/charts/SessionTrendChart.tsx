@@ -63,24 +63,22 @@ export function SessionTrendChart({ data }: SessionTrendChartProps) {
   return (
     <ResponsiveContainer width="100%" height={280}>
       <LineChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
-        <CartesianGrid strokeDasharray="3 3" className="stroke-muted" vertical={false} />
+        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
         <XAxis
           dataKey="date"
-          tick={{ fontSize: 11 }}
-          className="fill-muted-foreground"
+          tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
           tickLine={false}
           axisLine={false}
         />
         <YAxis
-          tick={{ fontSize: 11 }}
-          className="fill-muted-foreground"
+          tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
           tickLine={false}
           axisLine={false}
           width={30}
         />
         <Tooltip content={<CustomTooltip />} cursor={{ stroke: "hsl(var(--muted-foreground))", strokeWidth: 1, strokeDasharray: "4 4" }} />
         <Legend
-          wrapperStyle={{ fontSize: 12, paddingTop: 12 }}
+          wrapperStyle={{ fontSize: 12, paddingTop: 12, color: "hsl(var(--muted-foreground))" }}
           iconType="circle"
           iconSize={8}
         />
@@ -91,14 +89,16 @@ export function SessionTrendChart({ data }: SessionTrendChartProps) {
           strokeWidth={2}
           dot={false}
           activeDot={{ r: 4, strokeWidth: 0 }}
+          animationDuration={800}
         />
         <Line
           type="monotone"
           dataKey="Distance (km)"
-          stroke="hsl(142.1 76.2% 36.3%)"
+          stroke="hsl(142.1 70.6% 45.3%)"
           strokeWidth={2}
           dot={false}
           activeDot={{ r: 4, strokeWidth: 0 }}
+          animationDuration={900}
         />
         <Line
           type="monotone"
@@ -107,6 +107,7 @@ export function SessionTrendChart({ data }: SessionTrendChartProps) {
           strokeWidth={2}
           dot={false}
           activeDot={{ r: 4, strokeWidth: 0 }}
+          animationDuration={1000}
         />
       </LineChart>
     </ResponsiveContainer>

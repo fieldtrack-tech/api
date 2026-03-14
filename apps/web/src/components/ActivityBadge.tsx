@@ -39,7 +39,14 @@ export function ActivityBadge({ status, showDot = true, className }: ActivityBad
       )}
     >
       {showDot && (
-        <span className={cn("h-1.5 w-1.5 rounded-full", dot)} aria-hidden="true" />
+        status === "ACTIVE" ? (
+          <span className="relative flex h-2 w-2 shrink-0" aria-hidden="true">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+          </span>
+        ) : (
+          <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", dot)} aria-hidden="true" />
+        )
       )}
       {label}
     </span>

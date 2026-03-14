@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { motion } from "framer-motion";
 import {
   LayoutDashboard,
   Clock,
@@ -73,21 +74,30 @@ export function SidebarNav() {
 
   return (
     <nav className="flex flex-col gap-1 p-2">
-      {navItems.map((item) => (
-        <Link
-          key={item.href}
-          href={item.href}
-          className={cn(
-            "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-            pathname === item.href || pathname.startsWith(item.href + "/")
-              ? "bg-primary text-primary-foreground"
-              : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-          )}
-        >
-          {item.icon}
-          {item.label}
-        </Link>
-      ))}
+      {navItems.map((item) => {
+        const isActive =
+          pathname === item.href || pathname.startsWith(item.href + "/");
+        return (
+          <motion.div
+            key={item.href}
+            whileHover={{ x: isActive ? 0 : 4 }}
+            transition={{ type: "spring", stiffness: 400, damping: 30 }}
+          >
+            <Link
+              href={item.href}
+              className={cn(
+                "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                isActive
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+              )}
+            >
+              {item.icon}
+              {item.label}
+            </Link>
+          </motion.div>
+        );
+      })}
     </nav>
   );
 }
