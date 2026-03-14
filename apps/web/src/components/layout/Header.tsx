@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo } from "react";
-import { Menu, LogOut, ChevronDown } from "lucide-react";
+import Link from "next/link";
+import { Menu, LogOut, ChevronDown, UserCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -35,6 +36,16 @@ function useTodayString() {
   }, []);
 }
 
+/** Returns ISO date range for today (local midnight to local 23:59:59) */
+function useTodayRange() {
+  return useMemo(() => {
+    const now = new Date();
+    const from = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    const to = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    return { from: from.toISOString(), to: to.toISOString() };
+  }, []);
+}
+
 function getFirstName(fullName: string | undefined | null, email: string | undefined | null): string {
   if (fullName) return fullName.split(" ")[0];
   if (email) return email.split("@")[0];
@@ -44,7 +55,8 @@ function getFirstName(fullName: string | undefined | null, email: string | undef
 export function Header() {
   const { user, role, logout } = useAuth();
   const { data: profile } = useMyProfile();
-  const { data: orgSummary } = useOrgSummary();
+  const { from, to } = useTodayRange();
+  const { data: orgSummary } = useOrgSummary(from, to);
   const today = useTodayString();
 
   const isAdmin = role === "ADMIN";
@@ -128,6 +140,13 @@ export function Header() {
                 <p className="font-semibold text-sm">{displayName}</p>
                 <p className="text-xs text-muted-foreground font-normal truncate">{user?.email}</p>
               </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem asChild>
+                <Link href="/profile" className="cursor-pointer flex items-center">
+                  <UserCircle className="mr-2 h-4 w-4" />
+                  Profile
+                </Link>
+              </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => void logout()} className="cursor-pointer text-destructive focus:text-destructive">
                 <LogOut className="mr-2 h-4 w-4" />

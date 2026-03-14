@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { useLeaderboard } from "@/hooks/queries/useAnalytics";
 import { useMyProfile } from "@/hooks/queries/useProfile";
 import { useAuth } from "@/hooks/useAuth";
@@ -30,7 +31,7 @@ const METRIC_DESCRIPTIONS: Record<Metric, string> = {
 
 export default function LeaderboardPage() {
   const [metric, setMetric] = useState<Metric>("distance");
-  const { data, isLoading, error } = useLeaderboard(metric, 50);
+  const { data, isLoading, error, refetch } = useLeaderboard(metric, 50);
   const { data: profile } = useMyProfile();
   const { role } = useAuth();
   const isAdmin = role === "ADMIN";
@@ -50,7 +51,8 @@ export default function LeaderboardPage() {
 
       {/* Top 3 podium (visual if we have data) */}
       {!isLoading && !error && data && data.length >= 3 && (
-        <StaggerList className="grid grid-cols-3 gap-3">
+        <AnimatePresence mode="wait">
+          <StaggerList key={metric} className="grid grid-cols-3 gap-3">
           {/* 2nd place */}
           <StaggerItem>
             <div className="flex flex-col items-center justify-end gap-2 rounded-xl border bg-slate-50 dark:bg-slate-900/40 p-4 pt-6 h-full">
@@ -85,6 +87,7 @@ export default function LeaderboardPage() {
             </div>
           </StaggerItem>
         </StaggerList>
+        </AnimatePresence>
       )}
 
       {/* Full table */}
@@ -103,21 +106,38 @@ export default function LeaderboardPage() {
           </Tabs>
         </CardHeader>
         <CardContent>
-          {error && <ErrorBanner error={error} />}
-          {isLoading ? (
-            <div className="space-y-3">
-              {Array.from({ length: 10 }).map((_, i) => (
-                <Skeleton key={i} className="h-12 w-full" />
-              ))}
-            </div>
-          ) : (
-            <LeaderboardTable
-              data={data ?? []}
-              metric={metric}
-              highlightEmployeeId={profile?.id}
-              isAdmin={isAdmin}
-            />
-          )}
+          {error && <ErrorBanner error={error} onRetry={() => void refetch()} />}
+          <AnimatePresence mode="wait">
+            {isLoading ? (
+              <motion.div
+                key="loading"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.15 }}
+                className="space-y-3"
+              >
+                {Array.from({ length: 10 }).map((_, i) => (
+                  <Skeleton key={i} className="h-12 w-full" />
+                ))}
+              </motion.div>
+            ) : (
+              <motion.div
+                key={metric}
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                transition={{ duration: 0.2 }}
+              >
+                <LeaderboardTable
+                  data={data ?? []}
+                  metric={metric}
+                  highlightEmployeeId={profile?.id}
+                  isAdmin={isAdmin}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
         </CardContent>
       </Card>
       </FadeUp>

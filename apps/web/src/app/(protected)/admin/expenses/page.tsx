@@ -272,7 +272,7 @@ export default function AdminExpensesPage() {
     if (!permissions.manageExpenses) router.replace("/sessions");
   }, [permissions, router]);
 
-  const { data: allExpenses, isLoading, error } = useAllOrgExpenses();
+  const { data: allExpenses, isLoading, error, refetch } = useAllOrgExpenses();
   const updateStatus = useUpdateExpenseStatus();
   const groups = useMemo(() => groupExpenses(allExpenses), [allExpenses]);
 
@@ -334,7 +334,7 @@ export default function AdminExpensesPage() {
         )}
       </div>
 
-      {error && <ErrorBanner error={error} />}
+      {error && <ErrorBanner error={error} onRetry={() => void refetch()} />}
 
       {/* Table */}
       <div className="rounded-xl border bg-card overflow-hidden">

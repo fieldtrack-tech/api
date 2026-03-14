@@ -62,6 +62,7 @@ export function useAllOrgSessions() {
     data: query.data ?? [],
     isLoading: query.isLoading || query.hasNextPage === true,
     error: query.error,
+    refetch: query.refetch,
   };
 }
 

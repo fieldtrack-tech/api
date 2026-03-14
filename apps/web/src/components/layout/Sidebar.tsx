@@ -8,8 +8,6 @@ import {
   Clock,
   Receipt,
   BarChart3,
-  Users,
-  ClipboardList,
   Activity,
   UserCircle,
   Trophy,
@@ -64,23 +62,32 @@ function NavItemRow({ item, isActive }: { item: NavItem; isActive: boolean }) {
 
 export function SidebarNav() {
   const pathname = usePathname();
-  const { permissions } = useAuth();
+  const { permissions, role } = useAuth();
+  const isAdmin = role === "ADMIN";
 
-  const commonItems: NavItem[] = [
+  // Operations — the core daily-workflow pages (role-aware routing)
+  const operationsItems: NavItem[] = [
     { href: "/dashboard", label: "Dashboard", icon: <LayoutDashboard className="h-4 w-4" /> },
+    {
+      href: isAdmin ? "/admin/sessions" : "/sessions",
+      label: "Sessions",
+      icon: <Clock className="h-4 w-4" />,
+    },
+    {
+      href: isAdmin ? "/admin/expenses" : "/expenses",
+      label: "Expenses",
+      icon: <Receipt className="h-4 w-4" />,
+    },
+  ];
+
+  // Personal — leaderboard + profile (all users)
+  const personalItems: NavItem[] = [
     { href: "/leaderboard", label: "Leaderboard", icon: <Trophy className="h-4 w-4" /> },
-    { href: "/sessions", label: "Sessions", icon: <Clock className="h-4 w-4" /> },
-    { href: "/expenses", label: "Expenses", icon: <Receipt className="h-4 w-4" /> },
     { href: "/profile", label: "Profile", icon: <UserCircle className="h-4 w-4" /> },
   ];
 
-  const adminItems: NavItem[] = [
-    ...(permissions.viewOrgSessions
-      ? [{ href: "/admin/sessions", label: "All Sessions", icon: <ClipboardList className="h-4 w-4" /> }]
-      : []),
-    ...(permissions.manageExpenses
-      ? [{ href: "/admin/expenses", label: "Manage Expenses", icon: <Users className="h-4 w-4" /> }]
-      : []),
+  // Administration — analytics tools (admin only)
+  const administrationItems: NavItem[] = [
     ...(permissions.viewAnalytics
       ? [
           { href: "/admin/analytics", label: "Analytics", icon: <BarChart3 className="h-4 w-4" /> },
@@ -94,16 +101,25 @@ export function SidebarNav() {
 
   return (
     <nav className="flex flex-col gap-0.5 p-3">
-      {commonItems.map((item) => (
+      <p className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/50">
+        Operations
+      </p>
+      {operationsItems.map((item) => (
         <NavItemRow key={item.href} item={item} isActive={isActive(item.href)} />
       ))}
 
-      {adminItems.length > 0 && (
+      <div className="mt-2 pt-2 border-t border-border/40">
+        {personalItems.map((item) => (
+          <NavItemRow key={item.href} item={item} isActive={isActive(item.href)} />
+        ))}
+      </div>
+
+      {administrationItems.length > 0 && (
         <div className="mt-4">
           <p className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/50">
             Administration
           </p>
-          {adminItems.map((item) => (
+          {administrationItems.map((item) => (
             <NavItemRow key={item.href} item={item} isActive={isActive(item.href)} />
           ))}
         </div>

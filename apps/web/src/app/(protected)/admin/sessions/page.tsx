@@ -274,7 +274,7 @@ export default function AdminSessionsPage() {
     if (!permissions.viewOrgSessions) router.replace("/sessions");
   }, [permissions, router]);
 
-  const { data: allSessions, isLoading, error } = useAllOrgSessions();
+  const { data: allSessions, isLoading, error, refetch } = useAllOrgSessions();
   const groups = useMemo(() => groupSessions(allSessions), [allSessions]);
 
   const tabCounts = useMemo(() => {
@@ -304,7 +304,7 @@ export default function AdminSessionsPage() {
         </p>
       </div>
 
-      {error && <ErrorBanner error={error} />}
+      {error && <ErrorBanner error={error} onRetry={() => void refetch()} />}
 
       <div className="flex gap-1 rounded-lg border bg-muted/40 p-1 w-fit">
         {TABS.map((tab) => (
