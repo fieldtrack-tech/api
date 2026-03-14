@@ -32,6 +32,9 @@ export function useOrgSessions(page: number, limit: number) {
  * Fetches ALL org sessions across all pages (limit=100 per page).
  * Auto-fetches subsequent pages until the entire dataset is loaded.
  * Returns a flat array of all sessions for client-side grouping.
+ *
+ * After the backend optimisation (get_org_latest_sessions RPC), each page
+ * contains ONE row per employee, so the dataset converges in 1-2 calls.
  */
 export function useAllOrgSessions() {
   const query = useInfiniteQuery<PaginatedResponse<AttendanceSession>, Error, AttendanceSession[], [string], number>({
@@ -60,6 +63,24 @@ export function useAllOrgSessions() {
     isLoading: query.isLoading || query.hasNextPage === true,
     error: query.error,
   };
+}
+
+/**
+ * Fetches all sessions for a specific employee (history drill-down).
+ * Used by the session history sheet in the admin sessions page.
+ * Only active when employeeId is non-null.
+ */
+export function useEmployeeSessionHistory(employeeId: string | null) {
+  return useQuery<PaginatedResponse<AttendanceSession>>({
+    queryKey: ["orgSessionsEmployee", employeeId],
+    queryFn: () =>
+      apiGetPaginated<AttendanceSession>(API.orgSessions, {
+        employee_id: employeeId!,
+        page: "1",
+        limit: "100",
+      }),
+    enabled: !!employeeId,
+  });
 }
 
 /**

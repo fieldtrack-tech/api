@@ -189,6 +189,52 @@ export const attendanceRepository = {
   },
 
   /**
+   * Get the latest session per employee for the entire organization (admin view).
+   * Calls the `get_org_latest_sessions` DB function which uses DISTINCT ON for efficiency.
+   * Returns one row per employee, sorted by ACTIVE → RECENT → INACTIVE then checkin_at DESC.
+   */
+  async findLatestSessionPerEmployee(
+    request: FastifyRequest,
+    page: number,
+    limit: number,
+    status: string = "all",
+  ): Promise<{ data: EnrichedAttendanceSession[]; total: number }> {
+    const safeLimit = Math.min(100, Math.max(1, limit));
+    const safeOffset = (Math.max(1, page) - 1) * safeLimit;
+
+    const { data, error } = await supabase.rpc("get_org_latest_sessions", {
+      p_org_id: request.organizationId,
+      p_status: status,
+      p_limit: safeLimit,
+      p_offset: safeOffset,
+    });
+
+    if (error) {
+      throw new Error(`Failed to fetch latest sessions per employee: ${error.message}`);
+    }
+
+    const rows = (data ?? []) as Array<Record<string, unknown>>;
+    const total = rows.length > 0 ? Number(rows[0].total_count) : 0;
+    const mapped = rows.map((row) => ({
+      id: row.id,
+      employee_id: row.employee_id,
+      organization_id: row.organization_id,
+      checkin_at: row.checkin_at,
+      checkout_at: row.checkout_at,
+      total_distance_km: row.total_distance_km,
+      total_duration_seconds: row.total_duration_seconds,
+      distance_recalculation_status: row.distance_recalculation_status,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      employee_code: row.employee_code ?? null,
+      employee_name: row.employee_name ?? null,
+      activityStatus: row.activity_status as ActivityStatus,
+    } as EnrichedAttendanceSession));
+
+    return { data: mapped, total };
+  },
+
+  /**
    * Get all sessions for the entire organization (admin view).
    * Joins with employees to include employee_code, employee_name, and activityStatus.
    */

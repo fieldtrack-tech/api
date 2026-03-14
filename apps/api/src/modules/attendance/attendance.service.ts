@@ -74,7 +74,12 @@ export const attendanceService = {
     request: FastifyRequest,
     page: number,
     limit: number,
+    status: string = "all",
+    employeeId?: string,
   ): Promise<{ data: EnrichedAttendanceSession[]; total: number }> {
-    return attendanceRepository.findSessionsByOrg(request, page, limit);
+    if (employeeId) {
+      return attendanceRepository.findSessionsByUser(request, employeeId, page, limit);
+    }
+    return attendanceRepository.findLatestSessionPerEmployee(request, page, limit, status);
   },
 };

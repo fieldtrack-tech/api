@@ -14,6 +14,13 @@ export const paginationSchema = z.object({
 
 export type PaginationQuery = z.infer<typeof paginationSchema>;
 
+export const orgSessionsQuerySchema = paginationSchema.extend({
+    status: z.enum(["all", "active", "recent", "inactive"]).default("all"),
+    employee_id: z.string().optional(),
+});
+
+export type OrgSessionsQuery = z.infer<typeof orgSessionsQuerySchema>;
+
 // ─── Response Types ──────────────────────────────────────
 
 export interface AttendanceResponse {

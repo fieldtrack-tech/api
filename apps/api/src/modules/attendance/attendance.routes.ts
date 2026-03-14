@@ -5,7 +5,7 @@ import { authenticate } from "../../middleware/auth.js";
 import { requireRole } from "../../middleware/role-guard.js";
 import { attendanceController } from "./attendance.controller.js";
 import { sessionSummaryController } from "../session_summary/session_summary.controller.js";
-import { paginationSchema } from "./attendance.schema.js";
+import { paginationSchema, orgSessionsQuerySchema } from "./attendance.schema.js";
 
 const sessionItemSchema: z.ZodType<AttendanceSession> = z.object({
   id: z.string(),
@@ -105,7 +105,7 @@ export async function attendanceRoutes(app: FastifyInstance): Promise<void> {
     {
       schema: {
         tags: ["admin"],
-        querystring: paginationSchema,
+        querystring: orgSessionsQuerySchema,
         response: { 200: sessionListResponseSchema.describe("All organization attendance sessions") },
       },
       // preValidation ensures 401/403 fires before querystring validation

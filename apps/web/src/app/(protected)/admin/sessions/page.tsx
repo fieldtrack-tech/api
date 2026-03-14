@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
-import { useAllOrgSessions } from "@/hooks/queries/useSessions";
+import { useAllOrgSessions, useEmployeeSessionHistory } from "@/hooks/queries/useSessions";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { EmployeeIdentity } from "@/components/EmployeeIdentity";
 import { Badge } from "@/components/ui/badge";
@@ -115,6 +115,11 @@ function SessionHistorySheet({
   group: EmployeeSessionGroup | null;
   onClose: () => void;
 }) {
+  const { data: historyPage, isLoading: historyLoading } = useEmployeeSessionHistory(
+    group?.employeeId ?? null,
+  );
+  const historySessions = historyPage?.data ?? [];
+
   return (
     <Sheet open={!!group} onOpenChange={(open) => !open && onClose()}>
       <SheetContent side="right" className="w-full sm:max-w-[480px] p-0 flex flex-col">
@@ -132,49 +137,59 @@ function SessionHistorySheet({
                 size="md"
               />
               <p className="text-sm text-muted-foreground mt-1">
-                {group.sessions.length} session{group.sessions.length !== 1 ? "s" : ""} total
+                {historyLoading
+                  ? "Loading sessions…"
+                  : `${historySessions.length} session${historySessions.length !== 1 ? "s" : ""} total`}
               </p>
             </SheetHeader>
 
             <div className="flex-1 overflow-y-auto divide-y">
-              {group.sessions.map((session) => {
-                const status = session.activityStatus ?? deriveStatus(session);
-                return (
-                  <div
-                    key={session.id}
-                    className={cn(
-                      "px-6 py-4",
-                      status === "ACTIVE" && "bg-emerald-50/50 dark:bg-emerald-950/20"
-                    )}
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="space-y-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium">{formatDate(session.checkin_at)}</span>
-                          <StatusBadge status={status} />
+              {historyLoading &&
+                Array.from({ length: 4 }).map((_, i) => (
+                  <div key={i} className="px-6 py-4 animate-pulse space-y-2">
+                    <div className="h-3 w-32 rounded bg-muted" />
+                    <div className="h-2.5 w-48 rounded bg-muted" />
+                  </div>
+                ))}
+              {!historyLoading &&
+                historySessions.map((session) => {
+                  const status = session.activityStatus ?? deriveStatus(session);
+                  return (
+                    <div
+                      key={session.id}
+                      className={cn(
+                        "px-6 py-4",
+                        status === "ACTIVE" && "bg-emerald-50/50 dark:bg-emerald-950/20"
+                      )}
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="space-y-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium">{formatDate(session.checkin_at)}</span>
+                            <StatusBadge status={status} />
+                          </div>
+                          <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                            <Clock className="h-3 w-3 shrink-0" />
+                            <span>
+                              {formatTime(session.checkin_at)}
+                              {session.checkout_at
+                                ? ` to ${formatTime(session.checkout_at)}`
+                                : " (checked in)"}
+                            </span>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
-                          <Clock className="h-3 w-3 shrink-0" />
-                          <span>
-                            {formatTime(session.checkin_at)}
-                            {session.checkout_at
-                              ? ` to ${formatTime(session.checkout_at)}`
-                              : " (checked in)"}
-                          </span>
+                        <div className="text-right shrink-0 space-y-0.5">
+                          <p className="text-sm tabular-nums text-muted-foreground">
+                            {formatDistance(session.total_distance_km)}
+                          </p>
+                          <p className="text-sm tabular-nums text-muted-foreground">
+                            {formatDuration(session.total_duration_seconds)}
+                          </p>
                         </div>
-                      </div>
-                      <div className="text-right shrink-0 space-y-0.5">
-                        <p className="text-sm tabular-nums text-muted-foreground">
-                          {formatDistance(session.total_distance_km)}
-                        </p>
-                        <p className="text-sm tabular-nums text-muted-foreground">
-                          {formatDuration(session.total_duration_seconds)}
-                        </p>
                       </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
             </div>
           </>
         )}
@@ -285,7 +300,7 @@ export default function AdminSessionsPage() {
         <p className="text-muted-foreground">
           {isLoading
             ? "Loading..."
-            : `${groups.length} employees · ${allSessions.length} sessions total`}
+            : `${groups.length} employee${groups.length !== 1 ? "s" : ""} with session activity`}
         </p>
       </div>
 

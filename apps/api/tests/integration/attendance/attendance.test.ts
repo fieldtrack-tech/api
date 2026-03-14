@@ -20,6 +20,7 @@ vi.mock("../../../src/modules/attendance/attendance.repository.js", () => ({
     closeSession: vi.fn(),
     findSessionsByUser: vi.fn(),
     findSessionsByOrg: vi.fn(),
+    findLatestSessionPerEmployee: vi.fn(),
     validateSessionActive: vi.fn(),
   },
 }));
@@ -239,7 +240,7 @@ describe("Attendance Integration Tests", () => {
     });
 
     it("returns 200 for an ADMIN", async () => {
-      vi.mocked(attendanceRepository.findSessionsByOrg).mockResolvedValue({ data: [], total: 0 } as never);
+      vi.mocked(attendanceRepository.findLatestSessionPerEmployee).mockResolvedValue({ data: [], total: 0 } as never);
 
       const res = await app.inject({
         method: "GET",
@@ -248,6 +249,62 @@ describe("Attendance Integration Tests", () => {
       });
 
       expect(res.statusCode).toBe(200);
+    });
+
+    it("accepts a valid status filter param", async () => {
+      vi.mocked(attendanceRepository.findLatestSessionPerEmployee).mockResolvedValue({ data: [], total: 0 } as never);
+
+      const res = await app.inject({
+        method: "GET",
+        url: "/attendance/org-sessions?status=active",
+        headers: { authorization: `Bearer ${adminToken}` },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(attendanceRepository.findLatestSessionPerEmployee).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.any(Number),
+        expect.any(Number),
+        "active",
+      );
+    });
+
+    it("returns 400 for an invalid status value", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/attendance/org-sessions?status=unknown",
+        headers: { authorization: `Bearer ${adminToken}` },
+      });
+
+      expect(res.statusCode).toBe(400);
+    });
+
+    it("routes to findSessionsByUser when employee_id is provided", async () => {
+      vi.mocked(attendanceRepository.findSessionsByUser).mockResolvedValue({ data: [], total: 0 } as never);
+
+      const res = await app.inject({
+        method: "GET",
+        url: `/attendance/org-sessions?employee_id=${TEST_EMPLOYEE_ID}`,
+        headers: { authorization: `Bearer ${adminToken}` },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(attendanceRepository.findSessionsByUser).toHaveBeenCalledWith(
+        expect.anything(),
+        TEST_EMPLOYEE_ID,
+        expect.any(Number),
+        expect.any(Number),
+      );
+      expect(attendanceRepository.findLatestSessionPerEmployee).not.toHaveBeenCalled();
+    });
+
+    it("rejects an invalid limit above 100", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/attendance/org-sessions?limit=500",
+        headers: { authorization: `Bearer ${adminToken}` },
+      });
+      expect(res.statusCode).toBe(400);
     });
   });
 
