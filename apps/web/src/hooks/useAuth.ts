@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { useAuthContext } from "@/contexts/AuthContext";
 import { UserRole } from "@/types";
+import { queryClient } from "@/lib/query-client";
 
 export function useAuth() {
   const router = useRouter();
@@ -20,6 +21,7 @@ export function useAuth() {
 
   async function logout(): Promise<void> {
     await supabase.auth.signOut();
+    queryClient.clear();
     router.push("/login");
   }
 
