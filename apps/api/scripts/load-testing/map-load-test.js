@@ -66,8 +66,12 @@ export default function () {
   requestsTotal.add(1);
   mapDuration.add(res.timings.duration);
 
+  // Correctness check — only logical failures increment error_rate
   const ok = check(res, {
     "map status 200": (r) => r.status === 200,
+    "map response is success": (r) => {
+      try { return JSON.parse(r.body).success === true; } catch { return false; }
+    },
     "map has markers array": (r) => {
       try {
         const body = JSON.parse(r.body);
@@ -76,10 +80,11 @@ export default function () {
         return false;
       }
     },
-    "map response time < 500ms": (r) => r.timings.duration < 500,
     "map content-encoding compressed": (r) =>
       r.headers["Content-Encoding"] !== undefined || r.body.length > 0,
   });
+  // Latency check — observability only, does not affect error_rate
+  check(res, { "map response time < 500ms": (r) => r.timings.duration < 500 });
   errorRate.add(!ok);
 
   // Simulate 30-second polling interval (realistic monitoring cadence)

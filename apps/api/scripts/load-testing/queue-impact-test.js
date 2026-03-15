@@ -92,11 +92,13 @@ export function checkoutBurst() {
   requestsTotal.add(1);
   checkoutDuration.add(res.timings.duration);
 
+  // Correctness check — only logical failures increment error_rate
   const ok = check(res, {
     // 200 = checked out successfully; 409 = no open session (idempotent)
     "checkout accepted": (r) => r.status === 200 || r.status === 409,
-    "checkout < 1s": (r) => r.timings.duration < 1000,
   });
+  // Latency check — observability only, does not affect error_rate
+  check(res, { "checkout < 1s": (r) => r.timings.duration < 1000 });
   errorRate.add(!ok);
 
   sleep(1);

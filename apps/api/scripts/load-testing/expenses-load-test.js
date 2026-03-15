@@ -83,8 +83,12 @@ export default function () {
   requestsTotal.add(1);
   submitDuration.add(submitRes.timings.duration);
 
+  // Correctness check — only logical failures increment error_rate
   const submitOk = check(submitRes, {
     "expense submit 201": (r) => r.status === 201,
+    "expense response is success": (r) => {
+      try { return JSON.parse(r.body).success === true; } catch { return false; }
+    },
     "expense has id": (r) => {
       try {
         const body = JSON.parse(r.body);
@@ -93,8 +97,9 @@ export default function () {
         return false;
       }
     },
-    "expense submit < 1s": (r) => r.timings.duration < 1000,
   });
+  // Latency check — observability only, does not affect error_rate
+  check(submitRes, { "expense submit < 1s": (r) => r.timings.duration < 1000 });
   errorRate.add(!submitOk);
 
   sleep(1);
@@ -110,6 +115,9 @@ export default function () {
 
   const listOk = check(listRes, {
     "expense list 200": (r) => r.status === 200,
+    "expense list response is success": (r) => {
+      try { return JSON.parse(r.body).success === true; } catch { return false; }
+    },
     "expense list has pagination": (r) => {
       try {
         const body = JSON.parse(r.body);
