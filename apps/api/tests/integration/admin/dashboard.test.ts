@@ -7,6 +7,21 @@ vi.mock("../../../src/config/redis.js", () => ({
   redisClient: { on: vi.fn(), quit: vi.fn(), disconnect: vi.fn() },
 }));
 
+// Phase 22: Dashboard route now uses getCached() and deduped().
+// Both are mocked here so tests are not affected by Redis connection retries.
+vi.mock("../../../src/utils/cache.js", () => ({
+  getCached: vi.fn().mockImplementation(
+    (_key: string, _ttl: number, fn: () => Promise<unknown>) => fn(),
+  ),
+  invalidateOrgAnalytics: vi.fn().mockResolvedValue(undefined),
+  ANALYTICS_CACHE_TTL: 300,
+}));
+vi.mock("../../../src/utils/dedup.js", () => ({
+  deduped: vi.fn().mockImplementation(
+    (_key: string, fn: () => Promise<unknown>) => fn(),
+  ),
+}));
+
 vi.mock("../../../src/workers/distance.queue.js", () => ({
   enqueueDistanceJob: vi.fn().mockResolvedValue(undefined),
 }));

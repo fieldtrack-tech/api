@@ -20,6 +20,8 @@ import abuseLoggingPlugin from "./plugins/security/abuse-logging.plugin.js";
 // Phase 19: OpenAPI documentation
 import openApiPlugin from "./plugins/openapi.plugin.js";
 import { registerZod } from "./plugins/zod.plugin.js";
+// Phase 22: Response compression (gzip + brotli)
+import compressPlugin from "@fastify/compress";
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -77,7 +79,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   // Phase 10: x-request-id header and span stamping.
-  await app.register(fp(async function onSendSafetyPlugin(instance) {
+  await app.register(fp(async function onSendSafetyPlugin(instance: FastifyInstance) {
     instance.addHook("onSend", async (request, reply, payload) => {
       void reply.header("x-request-id", request.id);
       const span = trace.getSpan(context.active());
@@ -148,6 +150,16 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // Prometheus metrics — GET /metrics (token-protected in production)
   await app.register(prometheusPlugin);
+
+  // Phase 22: Response compression — gzip and brotli for all responses > 1 KB.
+  // Heavy admin responses (sessions, analytics, expenses lists) shrink 60-80%,
+  // reducing response time significantly over slower public internet links.
+  // Order: register before routes so all route handlers have compression available.
+  await app.register(compressPlugin, {
+    global: true,        // compress all responses by default
+    threshold: 1024,     // only compress responses ≥ 1 KB
+    encodings: ["br", "gzip", "deflate"],
+  });
 
   // @fastify/jwt is only needed in test mode (HS256 test tokens).
   // Production uses JWKS/ES256 verification in auth.ts via verifySupabaseToken().
