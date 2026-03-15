@@ -6,6 +6,7 @@ import { UnauthorizedError } from "../utils/errors.js";
 import { fail } from "../utils/response.js";
 import { verifySupabaseToken } from "../auth/jwtVerifier.js";
 import { supabaseServiceClient } from "../config/supabase.js";
+import { getCached } from "../utils/cache.js";
 import { env } from "../config/env.js";
 
 /**
@@ -92,34 +93,47 @@ export async function authenticate(
                 throw new UnauthorizedError("User role missing in token metadata");
             }
 
-            // Step 3: Load user data from database
-            // Fetch organization_id since it's not in the JWT payload
-            const { data: userData, error: userError } = await supabaseServiceClient
-                .from("users")
-                .select("organization_id")
-                .eq("id", decoded.sub)
-                .single();
+            // Steps 3 & 3b: Resolve organization + employee identity.
+            // Results are cached in Redis (5 min TTL) so high-frequency polling
+            // (e.g. 50 VUs on the admin dashboard) doesn't hit the users/employees
+            // tables on every request — a single DB round-trip per cache window.
+            interface UserAuthContext { organizationId: string; employeeId: string | undefined; }
+            const authContext = await getCached<UserAuthContext>(
+                `auth:user:${userId}`,
+                300, // 5-minute TTL
+                async () => {
+                    const { data: userData, error: userError } = await supabaseServiceClient
+                        .from("users")
+                        .select("organization_id")
+                        .eq("id", userId)
+                        .single();
 
-            if (userError || !userData) {
-                request.log.warn({ sub: decoded.sub, error: userError }, "User not found in database");
-                throw new UnauthorizedError("User not found");
-            }
+                    if (userError || !userData) {
+                        request.log.warn({ sub: userId, error: userError }, "User not found in database");
+                        throw new UnauthorizedError("User not found");
+                    }
 
-            organizationId = userData.organization_id;
+                    // Step 3b: Resolve employees.id for this user (once, upfront).
+                    // EMPLOYEE routes need employees.id (employees.id ≠ users.id).
+                    // ADMIN users may not have an employees row — undefined is expected.
+                    const { data: employeeData } = await supabaseServiceClient
+                        .from("employees")
+                        .select("id")
+                        .eq("user_id", userId)
+                        .eq("organization_id", userData.organization_id)
+                        .eq("is_active", true)
+                        .limit(1)
+                        .maybeSingle();
 
-            // Step 3b: Resolve employees.id for this user (once, upfront).
-            // EMPLOYEE routes need employees.id (employees.id ≠ users.id).
-            // ADMIN users may not have an employees row — undefined is expected.
-            const { data: employeeData } = await supabaseServiceClient
-                .from("employees")
-                .select("id")
-                .eq("user_id", decoded.sub)
-                .eq("organization_id", organizationId)
-                .eq("is_active", true)
-                .limit(1)
-                .maybeSingle();
+                    return {
+                        organizationId: userData.organization_id,
+                        employeeId: employeeData?.id ?? undefined,
+                    };
+                },
+            );
 
-            request.employeeId = employeeData?.id ?? undefined;
+            organizationId = authContext.organizationId;
+            request.employeeId = authContext.employeeId;
         }
 
         // Step 4: Validate complete user context with Zod

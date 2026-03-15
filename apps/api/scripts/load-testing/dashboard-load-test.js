@@ -13,6 +13,12 @@
  *   p95 latency < 1000 ms  (/admin/dashboard)
  *   p95 latency < 800 ms   (/admin/sessions)
  *   error rate  < 1 %
+ *
+ * NOTE on rate limiting:
+ *   All 50 VUs share a single ADMIN_TOKEN, so they appear as ONE user to the
+ *   per-token rate limiter (1200 req/min).  50 VUs × ~12 req/min ≈ 600 req/min
+ *   — comfortably within budget.  In production, 50 real admins would each hold
+ *   their own token and each get the full 1200 req/min quota.
  */
 
 import http from "k6/http";

@@ -4,7 +4,13 @@
  * Registers @fastify/rate-limit globally with a Redis store so that limits are
  * enforced across all container replicas — never in process-memory.
  *
- * Global defaults: 100 requests / minute per client IP.
+ * Global defaults: 1200 requests / minute per authenticated user (keyed by
+ * Authorization header).  This is intentionally generous — an admin polling
+ * the dashboard every 5 s consumes only 12 req/min.  The strict cap exists to
+ * block runaway loops, not legitimate clients.
+ *
+ * Keying by token (not IP) means multiple real users behind the same NAT or
+ * load-test runner each get their own independent quota.
  *
  * Routes that need stricter limits (e.g. auth) can override via route config:
  *
@@ -30,14 +36,20 @@ const rateLimitRedis = new Redis(redisConnectionOptions);
 const rateLimitPlugin: FastifyPluginAsync = async (fastify: FastifyInstance) => {
     await fastify.register(fastifyRateLimit, {
         global: true,
-        max: 100,
+        max: 1200,
         timeWindow: "1 minute",
 
         // Redis store — required for Docker / multi-instance deployments.
         redis: rateLimitRedis,
 
-        // Key = client IP address.
-        keyGenerator: (request) => request.ip,
+        // Key by Authorization header so each unique bearer token (i.e. each
+        // authenticated user) gets its own quota.  Multiple users behind the
+        // same office NAT or k6 load-test runner won't collide.  Unauthenticated
+        // requests (health checks, docs) fall back to the client IP.
+        keyGenerator: (request) => {
+            const auth = request.headers.authorization;
+            return typeof auth === "string" && auth.length > 0 ? auth : request.ip;
+        },
 
         // Bypass rate limiting for localhost health checks / internal tooling.
         allowList: ["127.0.0.1", "::1"],
@@ -50,7 +62,7 @@ const rateLimitPlugin: FastifyPluginAsync = async (fastify: FastifyInstance) => 
         }),
     });
 
-    fastify.log.info("security-rate-limit plugin registered (Redis-backed, 100 req/min global)");
+    fastify.log.info("security-rate-limit plugin registered (Redis-backed, 1200 req/min per token)");
 };
 
 export default fp(rateLimitPlugin, {
