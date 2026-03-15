@@ -31,6 +31,7 @@ export type OrgScopedTable =
     | "attendance_sessions"
     | "employees"
     | "employee_daily_metrics"
+    | "employee_latest_sessions"
     | "expenses"
     | "gps_locations"
     | "org_daily_metrics"

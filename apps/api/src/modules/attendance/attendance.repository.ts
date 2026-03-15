@@ -3,14 +3,13 @@ import { orgTable } from "../../db/query.js";
 import { applyPagination } from "../../utils/pagination.js";
 import type { FastifyRequest, FastifyBaseLogger } from "fastify";
 import type { AttendanceSession } from "./attendance.schema.js";
-import type { ActivityStatus } from "@fieldtrack/types";
+import type { ActivityStatus, SessionDTO } from "@fieldtrack/types";
 
-/** Enriched session returned by list queries — adds employee info and activityStatus. */
-export type EnrichedAttendanceSession = AttendanceSession & {
-  employee_code: string | null;
-  employee_name: string | null;
-  activityStatus: ActivityStatus;
-};
+/**
+ * Enriched session returned by list queries — re-exported as SessionDTO.
+ * Kept as an alias so existing imports continue to work without a mass rename.
+ */
+export type EnrichedAttendanceSession = SessionDTO;
 
 /**
  * Computes the activity status of a session based on its checkout timestamp.
@@ -35,28 +34,33 @@ function computeActivityStatus(checkoutAt: string | null): ActivityStatus {
  *   check_out_at  → checkout_at
  */
 /**
- * Maps a raw employee_latest_sessions row to the EnrichedAttendanceSession DTO.
+ * Maps a raw employee_latest_sessions row to the SessionDTO.
  * Single source of truth for snapshot → API field mapping:
  *   session_id  → id
  *   status      → activityStatus
  *   updated_at  → created_at (snapshot has no created_at column)
+ *
+ * Returns a SessionDTO — database rows never leak directly to the API.
  */
-export function mapLatestSessionRow(row: Record<string, unknown>): EnrichedAttendanceSession {
+export function mapLatestSessionRow(row: Record<string, unknown>): SessionDTO {
+  // checkin_at may be missing if the production snapshot table predates the column
+  // being added; fall back to updated_at so dates render correctly.
+  const checkinAt = (row.checkin_at ?? row.updated_at) as string;
   return {
-    id: row.session_id as string | null,
+    id: (row.session_id as string | null) ?? null,
     employee_id: row.employee_id as string,
     organization_id: row.organization_id as string,
-    checkin_at: row.checkin_at as string,
+    checkin_at: checkinAt,
     checkout_at: (row.checkout_at as string | null) ?? null,
     total_distance_km: (row.total_distance_km as number | null) ?? null,
     total_duration_seconds: (row.total_duration_seconds as number | null) ?? null,
     distance_recalculation_status: (row.distance_recalculation_status as string | null) ?? null,
-    created_at: row.updated_at as string,
+    created_at: checkinAt,
     updated_at: row.updated_at as string,
     employee_code: (row.employee_code as string | null) ?? null,
     employee_name: (row.employee_name as string | null) ?? null,
     activityStatus: row.status as ActivityStatus,
-  } as EnrichedAttendanceSession;
+  };
 }
 
 export const attendanceRepository = {
@@ -225,7 +229,7 @@ export const attendanceRepository = {
     limit: number,
     status: string = "all",
   ): Promise<{ data: EnrichedAttendanceSession[]; total: number }> {
-    const safeLimit = Math.min(100, Math.max(1, limit));
+    const safeLimit = Math.min(1000, Math.max(1, limit));
     const safeOffset = (Math.max(1, page) - 1) * safeLimit;
 
     let query = supabase
@@ -238,7 +242,7 @@ export const attendanceRepository = {
     }
 
     const { data, error, count } = await query
-      .order("status", { ascending: true })
+      .order("status_priority", { ascending: true })
       .order("updated_at", { ascending: false })
       .range(safeOffset, safeOffset + safeLimit - 1);
 

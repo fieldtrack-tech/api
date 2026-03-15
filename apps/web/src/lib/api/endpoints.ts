@@ -5,6 +5,7 @@
 export const API = {
   // Sessions (attendance)
   sessions: "/attendance/my-sessions",
+  /** @deprecated Use `adminSessions` instead. Maintained temporarily for backwards compatibility. */
   orgSessions: "/attendance/org-sessions",
   /** Snapshot-backed endpoint — one row per employee, O(employees) read. */
   adminSessions: "/admin/sessions",

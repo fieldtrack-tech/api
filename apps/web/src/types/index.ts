@@ -8,6 +8,7 @@ export type {
   ExpenseStatus,
   ActivityStatus,
   AttendanceSession,
+  SessionDTO,
   GpsLocation,
   Expense,
   OrgSummaryData,

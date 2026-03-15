@@ -75,13 +75,6 @@ function makeChainBuilder(result: { data: unknown; error: null | { message: stri
 
 const NOW = new Date().toISOString();
 
-const SNAPSHOT_ROWS = [
-  { status: "ACTIVE" },
-  { status: "ACTIVE" },
-  { status: "RECENT" },
-  { status: "INACTIVE" },
-];
-
 const TODAY_SESSIONS = [
   { id: "s1", total_distance_km: 12.5 },
   { id: "s2", total_distance_km: 7.3 },
@@ -102,10 +95,25 @@ const EXPENSE_SUMMARY: EmployeeExpenseSummary[] = [
 
 // ─── Helper: set up supabase.from mock for one test ──────────────────────────
 
-function mockDashboardSupabase(): void {
+/**
+ * The dashboard now issues three count-only queries to employee_latest_sessions
+ * (ACTIVE count, RECENT count, total count) plus one to attendance_sessions.
+ * We use a call-index counter so each sequential call returns the right count.
+ */
+let snapshotCallIndex = 0;
+
+function mockDashboardSupabase(
+  activeCnt = 2,
+  recentCnt = 1,
+  totalCnt = 4,
+): void {
+  snapshotCallIndex = 0;
   vi.mocked(supabase.from).mockImplementation((table: string) => {
     if (table === "employee_latest_sessions") {
-      return makeChainBuilder({ data: SNAPSHOT_ROWS, error: null });
+      const idx = snapshotCallIndex++;
+      if (idx === 0) return makeChainBuilder({ data: null, error: null, count: activeCnt });
+      if (idx === 1) return makeChainBuilder({ data: null, error: null, count: recentCnt });
+      return makeChainBuilder({ data: null, error: null, count: totalCnt });
     }
     if (table === "attendance_sessions") {
       return makeChainBuilder({ data: TODAY_SESSIONS, error: null });

@@ -424,6 +424,167 @@ export type Database = {
           },
         ]
       }
+      employee_latest_sessions: {
+        Row: {
+          employee_id: string
+          organization_id: string
+          session_id: string | null
+          checkin_at: string | null
+          checkout_at: string | null
+          total_distance_km: number | null
+          total_duration_seconds: number | null
+          distance_recalculation_status: string
+          employee_code: string | null
+          employee_name: string | null
+          status: string
+          status_priority: number
+          updated_at: string
+        }
+        Insert: {
+          employee_id: string
+          organization_id: string
+          session_id?: string | null
+          checkin_at?: string | null
+          checkout_at?: string | null
+          total_distance_km?: number | null
+          total_duration_seconds?: number | null
+          distance_recalculation_status?: string
+          employee_code?: string | null
+          employee_name?: string | null
+          status?: string
+          status_priority?: number
+          updated_at?: string
+        }
+        Update: {
+          employee_id?: string
+          organization_id?: string
+          session_id?: string | null
+          checkin_at?: string | null
+          checkout_at?: string | null
+          total_distance_km?: number | null
+          total_duration_seconds?: number | null
+          distance_recalculation_status?: string
+          employee_code?: string | null
+          employee_name?: string | null
+          status?: string
+          status_priority?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "employee_latest_sessions_employee_id_fkey"
+            columns: ["employee_id"]
+            isOneToOne: false
+            referencedRelation: "employees"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "employee_latest_sessions_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "attendance_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      employee_daily_metrics: {
+        Row: {
+          id: string
+          organization_id: string
+          employee_id: string
+          date: string
+          sessions: number
+          distance_km: number
+          duration_seconds: number
+          expenses_count: number
+          expenses_amount: number
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          employee_id: string
+          date: string
+          sessions?: number
+          distance_km?: number
+          duration_seconds?: number
+          expenses_count?: number
+          expenses_amount?: number
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          employee_id?: string
+          date?: string
+          sessions?: number
+          distance_km?: number
+          duration_seconds?: number
+          expenses_count?: number
+          expenses_amount?: number
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "employee_daily_metrics_employee_id_fkey"
+            columns: ["employee_id"]
+            isOneToOne: false
+            referencedRelation: "employees"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "employee_daily_metrics_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      org_daily_metrics: {
+        Row: {
+          id: string
+          organization_id: string
+          date: string
+          total_sessions: number
+          total_distance_km: number
+          total_duration_seconds: number
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          date: string
+          total_sessions?: number
+          total_distance_km?: number
+          total_duration_seconds?: number
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          date?: string
+          total_sessions?: number
+          total_distance_km?: number
+          total_duration_seconds?: number
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "org_daily_metrics_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never

@@ -15,7 +15,9 @@
 // ─── Enums ────────────────────────────────────────────────────────────────────
 
 export type UserRole = "ADMIN" | "EMPLOYEE";
-export type ExpenseStatus = "PENDING" | "APPROVED" | "REJECTED";export type ActivityStatus = "ACTIVE" | "RECENT" | "INACTIVE";
+export type ExpenseStatus = "PENDING" | "APPROVED" | "REJECTED";
+export type ActivityStatus = "ACTIVE" | "RECENT" | "INACTIVE";
+
 // ─── Database row shapes (API response payloads) ──────────────────────────────
 
 export interface AttendanceSession {
@@ -26,7 +28,7 @@ export interface AttendanceSession {
   checkout_at: string | null;
   total_distance_km: number | null;
   total_duration_seconds: number | null;
-  distance_recalculation_status: string;
+  distance_recalculation_status: string | null;
   created_at: string;
   updated_at: string;
   /** Joined from employees table — present on all enriched queries */
@@ -35,6 +37,33 @@ export interface AttendanceSession {
   employee_name?: string | null;
   /** Computed activity classification based on checkout_at timestamp */
   activityStatus?: ActivityStatus;
+}
+
+/**
+ * Explicit DTO for session list API responses.
+ *
+ * Unlike AttendanceSession (which mirrors the DB row), every field here is
+ * required — the mapper function is responsible for resolving nulls and
+ * computing derived fields. This prevents database schema from leaking
+ * directly to the API and guards against future schema drift.
+ *
+ * Produced by: mapLatestSessionRow()  (snapshot path)
+ *              findSessionsByUser()   (attendance_sessions path)
+ */
+export interface SessionDTO {
+  id: string | null;
+  employee_id: string;
+  organization_id: string;
+  checkin_at: string;
+  checkout_at: string | null;
+  total_distance_km: number | null;
+  total_duration_seconds: number | null;
+  distance_recalculation_status: string | null;
+  created_at: string;
+  updated_at: string;
+  employee_code: string | null;
+  employee_name: string | null;
+  activityStatus: ActivityStatus;
 }
 
 export interface GpsLocation {

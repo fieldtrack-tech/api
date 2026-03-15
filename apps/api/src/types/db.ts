@@ -34,8 +34,21 @@ export type SessionSummaryRow = Database["public"]["Tables"]["session_summaries"
 export type SessionSummaryInsert = Database["public"]["Tables"]["session_summaries"]["Insert"];
 export type SessionSummaryUpdate = Database["public"]["Tables"]["session_summaries"]["Update"];
 
+export type EmployeeLatestSession = Database["public"]["Tables"]["employee_latest_sessions"]["Row"];
+export type EmployeeLatestSessionInsert = Database["public"]["Tables"]["employee_latest_sessions"]["Insert"];
+export type EmployeeLatestSessionUpdate = Database["public"]["Tables"]["employee_latest_sessions"]["Update"];
+
+export type EmployeeDailyMetric = Database["public"]["Tables"]["employee_daily_metrics"]["Row"];
+export type EmployeeDailyMetricInsert = Database["public"]["Tables"]["employee_daily_metrics"]["Insert"];
+export type EmployeeDailyMetricUpdate = Database["public"]["Tables"]["employee_daily_metrics"]["Update"];
+
+export type OrgDailyMetric = Database["public"]["Tables"]["org_daily_metrics"]["Row"];
+export type OrgDailyMetricInsert = Database["public"]["Tables"]["org_daily_metrics"]["Insert"];
+export type OrgDailyMetricUpdate = Database["public"]["Tables"]["org_daily_metrics"]["Update"];
+
 // ─── Enum types ───────────────────────────────────────────────────────────────
 
 export type UserRole = Database["public"]["Enums"]["user_role"];
 export type ExpenseStatus = Database["public"]["Enums"]["expense_status"];
 export type DistanceJobStatus = Database["public"]["Enums"]["distance_job_status"];
+

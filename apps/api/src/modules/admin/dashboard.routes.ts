@@ -37,11 +37,24 @@ export async function adminDashboardRoutes(app: FastifyInstance): Promise<void> 
         todayStart.setUTCHours(0, 0, 0, 0);
         const todayStartISO = todayStart.toISOString();
 
-        const [snapshotResult, todayResult, expenseSummary] = await Promise.all([
-          // Activity status counts from snapshot table (O(employees))
+        const [activeCountResult, recentCountResult, totalCountResult, todayResult, expenseSummary] = await Promise.all([
+          // Count-only queries — head:true means no row data is transferred, only the count.
+          // This is O(employees) via the snapshot index and correct for any org size.
           supabase
             .from("employee_latest_sessions")
-            .select("status", { count: "exact" })
+            .select("*", { count: "exact", head: true })
+            .eq("organization_id", orgId)
+            .eq("status", "ACTIVE"),
+
+          supabase
+            .from("employee_latest_sessions")
+            .select("*", { count: "exact", head: true })
+            .eq("organization_id", orgId)
+            .eq("status", "RECENT"),
+
+          supabase
+            .from("employee_latest_sessions")
+            .select("*", { count: "exact", head: true })
             .eq("organization_id", orgId),
 
           // Today's sessions — only date-filtered rows, uses checkin_at index
@@ -55,22 +68,18 @@ export async function adminDashboardRoutes(app: FastifyInstance): Promise<void> 
           expensesRepository.findExpenseSummaryByEmployee(request, 1, 5000),
         ]);
 
-        if (snapshotResult.error) {
-          throw new Error(`Dashboard: snapshot query failed: ${snapshotResult.error.message}`);
+        const snapshotError = activeCountResult.error ?? recentCountResult.error ?? totalCountResult.error;
+        if (snapshotError) {
+          throw new Error(`Dashboard: snapshot query failed: ${snapshotError.message}`);
         }
         if (todayResult.error) {
           throw new Error(`Dashboard: today sessions query failed: ${todayResult.error.message}`);
         }
 
-        // Count by status
-        let activeEmployeeCount = 0;
-        let recentEmployeeCount = 0;
-        let inactiveEmployeeCount = 0;
-        for (const row of (snapshotResult.data ?? []) as Array<{ status: string }>) {
-          if (row.status === "ACTIVE") activeEmployeeCount++;
-          else if (row.status === "RECENT") recentEmployeeCount++;
-          else inactiveEmployeeCount++;
-        }
+        // Derive counts from the three parallel count queries
+        const activeEmployeeCount = activeCountResult.count ?? 0;
+        const recentEmployeeCount = recentCountResult.count ?? 0;
+        const inactiveEmployeeCount = (totalCountResult.count ?? 0) - activeEmployeeCount - recentEmployeeCount;
 
         // Today's aggregates
         const todaySessions = (todayResult.data ?? []) as Array<{ id: string; total_distance_km: number | null }>;
