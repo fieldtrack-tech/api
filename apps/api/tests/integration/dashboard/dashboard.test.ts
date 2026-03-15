@@ -11,6 +11,10 @@ vi.mock("../../../src/workers/distance.queue.js", () => ({
   enqueueDistanceJob: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("../../../src/workers/analytics.queue.js", () => ({
+  enqueueAnalyticsJob: vi.fn().mockResolvedValue(undefined),
+}));
+
 // Dashboard service calls orgTable directly (no dedicated repository), so mock
 // the service itself to prevent any DB calls in integration tests.
 vi.mock("../../../src/modules/dashboard/dashboard.service.js", () => ({

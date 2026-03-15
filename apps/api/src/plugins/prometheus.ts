@@ -67,6 +67,44 @@ export const securityAuthBruteforce = new client.Counter({
   registers: [register],
 });
 
+// ─── Phase 21: Analytics Worker Metrics ──────────────────────────────────────
+
+/**
+ * Counts completed and failed analytics jobs.
+ * Label `status` is either "completed" or "failed".
+ */
+export const analyticsJobsTotal = new client.Counter({
+  name: "analytics_jobs_total",
+  help: "Total number of analytics aggregation jobs processed",
+  labelNames: ["status"],
+  registers: [register],
+});
+
+/**
+ * Histogram of analytics job processing time in seconds.
+ * Used to detect slow aggregation jobs (bucket at 0.5 s meets the 500 ms warn threshold).
+ */
+export const analyticsJobDurationSeconds = new client.Histogram({
+  name: "analytics_job_duration_seconds",
+  help: "Analytics job processing time in seconds",
+  buckets: [0.05, 0.1, 0.25, 0.5, 1, 2, 5],
+  registers: [register],
+});
+
+/**
+ * Current depth of the analytics BullMQ queue (waiting jobs).
+ * Updated on each Prometheus scrape via a gauge collector.
+ */
+export const analyticsQueueDepthGauge = new client.Gauge({
+  name: "analytics_queue_depth",
+  help: "Number of analytics jobs currently waiting in the queue",
+  registers: [register],
+  collect() {
+    // Populated asynchronously by the analytics queue module at scrape time.
+    // See analytics.queue.ts getAnalyticsQueueDepth() wiring in prometheus.ts.
+  },
+});
+
 const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.addHook("onRequest", async (request) => {
     request.startTime = process.hrtime();

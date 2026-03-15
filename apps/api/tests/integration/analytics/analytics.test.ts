@@ -11,6 +11,10 @@ vi.mock("../../../src/workers/distance.queue.js", () => ({
   enqueueDistanceJob: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("../../../src/workers/analytics.queue.js", () => ({
+  enqueueAnalyticsJob: vi.fn().mockResolvedValue(undefined),
+}));
+
 // Bypass Redis caching — always call through to the underlying function
 vi.mock("../../../src/utils/cache.js", () => ({
   getCached: vi.fn().mockImplementation(

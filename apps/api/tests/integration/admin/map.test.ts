@@ -11,6 +11,10 @@ vi.mock("../../../src/workers/distance.queue.js", () => ({
   enqueueDistanceJob: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("../../../src/workers/analytics.queue.js", () => ({
+  enqueueAnalyticsJob: vi.fn().mockResolvedValue(undefined),
+}));
+
 // The map route calls supabaseServiceClient.rpc("get_active_map_markers", ...)
 vi.mock("../../../src/config/supabase.js", () => ({
   supabaseServiceClient: { rpc: vi.fn() },

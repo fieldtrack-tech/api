@@ -11,6 +11,10 @@ vi.mock("../../../src/workers/distance.queue.js", () => ({
   enqueueDistanceJob: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("../../../src/workers/analytics.queue.js", () => ({
+  enqueueAnalyticsJob: vi.fn().mockResolvedValue(undefined),
+}));
+
 // The dashboard route calls supabaseServiceClient.from() directly for
 // employee_latest_sessions, attendance_sessions, and expenses queries.
 vi.mock("../../../src/config/supabase.js", () => ({
@@ -61,18 +65,19 @@ function makeChainBuilder(result: { data: unknown; error: null | { message: stri
   for (const m of methods) {
     chain[m] = vi.fn().mockReturnValue(chain);
   }
-  // Make it awaitable
+  // Make it awaitable (for direct-await usage)
   (chain as { then: (r: (v: unknown) => void) => Promise<unknown> }).then = (resolve) =>
     Promise.resolve(result).then(resolve);
+  // Support .maybeSingle() terminal call (used by org_daily_metrics today query)
+  (chain as { maybeSingle: () => Promise<unknown> }).maybeSingle = () =>
+    Promise.resolve(result);
   return chain as ReturnType<typeof makeBuilder>;
 }
 
 // ─── Default fixture data ─────────────────────────────────────────────────────
 
-const TODAY_SESSIONS = [
-  { id: "s1", total_distance_km: 12.5 },
-  { id: "s2", total_distance_km: 7.3 },
-];
+// Phase 21: today stats come from org_daily_metrics (not attendance_sessions scan)
+const TODAY_METRICS = { total_sessions: 2, total_distance_km: 19.8 };
 
 // Three pending expense rows totalling 225.00
 const PENDING_EXPENSES = [
@@ -85,8 +90,8 @@ const PENDING_EXPENSES = [
 
 /**
  * The dashboard now issues three count-only queries to employee_latest_sessions
- * (ACTIVE count, RECENT count, total count) plus one to attendance_sessions.
- * We use a call-index counter so each sequential call returns the right count.
+ * (ACTIVE, RECENT, total) plus one maybeSingle to org_daily_metrics for today.
+ * We use a call-index counter so each sequential snapshot call returns the right count.
  */
 let snapshotCallIndex = 0;
 
@@ -103,14 +108,14 @@ function mockDashboardSupabase(
       if (idx === 1) return makeChainBuilder({ data: null, error: null, count: recentCnt });
       return makeChainBuilder({ data: null, error: null, count: totalCnt });
     }
-    if (table === "attendance_sessions") {
-      return makeChainBuilder({ data: TODAY_SESSIONS, error: null });
+    // Phase 21: today's session + distance stats come from org_daily_metrics (.maybeSingle)
+    if (table === "org_daily_metrics") {
+      return makeChainBuilder({ data: TODAY_METRICS, error: null });
     }
     if (table === "expenses") {
       return makeChainBuilder({ data: PENDING_EXPENSES, error: null });
     }
-    // org_daily_metrics (session trend) and employee_daily_metrics / employees
-    // (leaderboard) — return empty arrays so analytics snapshots are [] by default.
+    // employee_daily_metrics / employees (leaderboard) — empty by default.
     return makeChainBuilder({ data: [], error: null });
   });
 }
@@ -231,11 +236,11 @@ describe("GET /admin/dashboard", () => {
       headers: { authorization: `Bearer ${adminToken}` },
     });
 
-    // from() is called for both tables; verify org_id is scoped
-    // eq() is called on each builder — verify it's called with the right org_id
-    // (We just verify from() was called at minimum once per table)
+    // Verify each data source is queried (scoping via .eq("organization_id", ...) is
+    // enforced by the route handler for every table).
     expect(supabase.from).toHaveBeenCalledWith("employee_latest_sessions");
-    expect(supabase.from).toHaveBeenCalledWith("attendance_sessions");
+    // Phase 21: today's stats come from org_daily_metrics, not attendance_sessions
+    expect(supabase.from).toHaveBeenCalledWith("org_daily_metrics");
     expect(supabase.from).toHaveBeenCalledWith("expenses");
   });
 });

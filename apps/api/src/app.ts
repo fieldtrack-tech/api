@@ -8,6 +8,7 @@ import { getLoggerConfig } from "./config/logger.js";
 import { registerJwt } from "./plugins/jwt.js";
 import { registerRoutes } from "./routes/index.js";
 import { startDistanceWorker } from "./workers/distance.worker.js";
+import { startAnalyticsWorker } from "./workers/analytics.worker.js";
 import { AppError } from "./utils/errors.js";
 import prometheusPlugin from "./plugins/prometheus.js";
 // Phase 15: Dedicated security plugins
@@ -163,6 +164,11 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Phase 10: Start BullMQ distance worker on boot.
   // The worker runs its own Redis-backed event loop — no blocking here.
   startDistanceWorker(app);
+
+  // Phase 21: Start analytics aggregation worker.
+  // Processes completed sessions and maintains employee_daily_metrics +
+  // org_daily_metrics so dashboard/leaderboard queries stay constant-time.
+  startAnalyticsWorker(app);
 
   // NOTE: performStartupRecovery is intentionally NOT called here.
   // It must run AFTER app.listen() resolves in server.ts so it never

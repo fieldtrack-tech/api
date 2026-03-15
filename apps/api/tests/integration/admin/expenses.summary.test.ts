@@ -11,6 +11,10 @@ vi.mock("../../../src/workers/distance.queue.js", () => ({
   enqueueDistanceJob: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("../../../src/workers/analytics.queue.js", () => ({
+  enqueueAnalyticsJob: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock("../../../src/modules/expenses/expenses.repository.js", () => ({
   expensesRepository: {
     createExpense: vi.fn(),

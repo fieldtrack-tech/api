@@ -25,10 +25,15 @@ vi.mock("../../../src/workers/distance.queue.js", () => ({
   enqueueDistanceJob: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("../../../src/workers/analytics.queue.js", () => ({
+  enqueueAnalyticsJob: vi.fn().mockResolvedValue(undefined),
+}));
+
 // Import AFTER mocks are declared so they receive mock implementations
 import { attendanceService } from "../../../src/modules/attendance/attendance.service.js";
 import { attendanceRepository } from "../../../src/modules/attendance/attendance.repository.js";
 import { enqueueDistanceJob } from "../../../src/workers/distance.queue.js";
+import { enqueueAnalyticsJob } from "../../../src/workers/analytics.queue.js";
 
 // ─── Shared fixtures ──────────────────────────────────────────────────────────
 
@@ -147,6 +152,15 @@ describe("attendanceService.checkOut()", () => {
   it("enqueues a distance job after closing the session", async () => {
     await attendanceService.checkOut(makeFakeRequest(USER_ID));
     expect(enqueueDistanceJob).toHaveBeenCalledWith(SESSION_ID);
+  });
+
+  it("enqueues an analytics job after closing the session", async () => {
+    await attendanceService.checkOut(makeFakeRequest(USER_ID));
+    expect(enqueueAnalyticsJob).toHaveBeenCalledWith(
+      SESSION_ID,
+      ORG_ID,
+      USER_ID,
+    );
   });
 
   it("throws ForbiddenError when request.employeeId is undefined", async () => {

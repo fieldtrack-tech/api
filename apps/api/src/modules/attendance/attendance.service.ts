@@ -1,6 +1,7 @@
 import type { FastifyRequest } from "fastify";
 import { attendanceRepository } from "./attendance.repository.js";
 import { enqueueDistanceJob } from "../../workers/distance.queue.js";
+import { enqueueAnalyticsJob } from "../../workers/analytics.queue.js";
 import {
   EmployeeAlreadyCheckedIn,
   SessionAlreadyClosed,
@@ -72,6 +73,22 @@ export const attendanceService = {
       request.log.warn(
         { sessionId: closedSession.id, error: message },
         "Failed to enqueue distance job — session summary may be delayed",
+      );
+    });
+
+    // Phase 21: Enqueue analytics aggregation job for this session.
+    // The job runs after checkout and recomputes daily metrics once the
+    // distance worker has written total_distance_km (exponential backoff
+    // of 5 s gives the distance worker plenty of time to finish first).
+    enqueueAnalyticsJob(
+      closedSession.id,
+      request.organizationId,
+      employeeId,
+    ).catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      request.log.warn(
+        { sessionId: closedSession.id, error: message },
+        "Failed to enqueue analytics job — daily metrics may be delayed",
       );
     });
 

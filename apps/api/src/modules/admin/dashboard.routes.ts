@@ -35,7 +35,7 @@ export async function adminDashboardRoutes(app: FastifyInstance): Promise<void> 
         const orgId = request.organizationId;
         const todayStart = new Date();
         todayStart.setUTCHours(0, 0, 0, 0);
-        const todayStartISO = todayStart.toISOString();
+        const todayDateStr = todayStart.toISOString().substring(0, 10); // YYYY-MM-DD
 
         // Date ranges for the embedded analytics snapshots
         const sevenDaysAgo = new Date(todayStart);
@@ -43,7 +43,7 @@ export async function adminDashboardRoutes(app: FastifyInstance): Promise<void> 
         const thirtyDaysAgo = new Date(todayStart);
         thirtyDaysAgo.setUTCDate(thirtyDaysAgo.getUTCDate() - 30);
 
-        const [activeCountResult, recentCountResult, totalCountResult, todayResult, pendingExpensesResult, sessionTrend, leaderboard] = await Promise.all([
+        const [activeCountResult, recentCountResult, totalCountResult, todayMetricsResult, pendingExpensesResult, sessionTrend, leaderboard] = await Promise.all([
           // Count-only queries — head:true means no row data is transferred, only the count.
           // This is O(employees) via the snapshot index and correct for any org size.
           supabase
@@ -63,12 +63,15 @@ export async function adminDashboardRoutes(app: FastifyInstance): Promise<void> 
             .select("*", { count: "exact", head: true })
             .eq("organization_id", orgId),
 
-          // Today's sessions — only date-filtered rows, uses checkin_at index
+          // Phase 21: Today's aggregates from org_daily_metrics — O(1) unique-index
+          // lookup instead of scanning attendance_sessions for date-filtered rows.
+          // Analytics worker keeps this table current within seconds of each checkout.
           supabase
-            .from("attendance_sessions")
-            .select("id, total_distance_km")
+            .from("org_daily_metrics")
+            .select("total_sessions, total_distance_km")
             .eq("organization_id", orgId)
-            .gte("checkin_at", todayStartISO),
+            .eq("date", todayDateStr)
+            .maybeSingle(),
 
           // Pending expenses — O(pending) targeted query instead of O(all expenses).
           // Only fetches the amount column for pending expenses to compute totals.
@@ -89,8 +92,8 @@ export async function adminDashboardRoutes(app: FastifyInstance): Promise<void> 
         if (snapshotError) {
           throw new Error(`Dashboard: snapshot query failed: ${snapshotError.message}`);
         }
-        if (todayResult.error) {
-          throw new Error(`Dashboard: today sessions query failed: ${todayResult.error.message}`);
+        if (todayMetricsResult.error) {
+          throw new Error(`Dashboard: today metrics query failed: ${todayMetricsResult.error.message}`);
         }
         if (pendingExpensesResult.error) {
           throw new Error(`Dashboard: pending expenses query failed: ${pendingExpensesResult.error.message}`);
@@ -101,12 +104,13 @@ export async function adminDashboardRoutes(app: FastifyInstance): Promise<void> 
         const recentEmployeeCount = recentCountResult.count ?? 0;
         const inactiveEmployeeCount = (totalCountResult.count ?? 0) - activeEmployeeCount - recentEmployeeCount;
 
-        // Today's aggregates
-        const todaySessions = (todayResult.data ?? []) as Array<{ id: string; total_distance_km: number | null }>;
-        const todaySessionCount = todaySessions.length;
-        const todayDistanceKm = Math.round(
-          todaySessions.reduce((sum, s) => sum + (s.total_distance_km ?? 0), 0) * 100,
-        ) / 100;
+        // Phase 21: Today's session + distance aggregates from org_daily_metrics.
+        // This is an O(1) unique-index point lookup vs. the previous O(today sessions) scan.
+        // The analytics worker keeps org_daily_metrics current within seconds of checkout.
+        // Active (not yet checked-out) sessions are captured by activeEmployeeCount separately.
+        const todayRow = todayMetricsResult.data as { total_sessions: number; total_distance_km: number } | null;
+        const todaySessionCount = todayRow?.total_sessions ?? 0;
+        const todayDistanceKm = Math.round((todayRow?.total_distance_km ?? 0) * 100) / 100;
 
         // Pending expense totals — direct sum over pending-only rows (O(pending))
         const pendingExpenses = (pendingExpensesResult.data ?? []) as Array<{ amount: number }>;
