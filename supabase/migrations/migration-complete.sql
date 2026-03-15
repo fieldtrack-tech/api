@@ -714,6 +714,56 @@ END;
 $outer$;
 
 -- ══════════════════════════════════════════════════════════════
+-- PERFORMANCE IMPROVEMENTS (applied 2025-07)
+-- ══════════════════════════════════════════════════════════════
+
+-- Partial index: speeds up ACTIVE-only lookups on employee_latest_sessions.
+-- Smaller than the composite idx_latest_sessions_org_status, targeted for
+-- the map endpoint's WHERE status = 'ACTIVE' filter.
+CREATE INDEX IF NOT EXISTS idx_latest_sessions_active
+  ON public.employee_latest_sessions (organization_id)
+  WHERE status = 'ACTIVE';
+
+-- RPC function: replaces the map endpoint's two-step snapshot+IN-clause with
+-- a single DISTINCT ON join executed entirely in the database.  Avoids
+-- PostgREST URL-length overflow that occurred with large IN(...) lists.
+CREATE OR REPLACE FUNCTION public.get_active_map_markers(
+  p_org_id uuid,
+  p_limit  integer DEFAULT 1000
+)
+RETURNS TABLE (
+  employee_id  uuid,
+  latitude     double precision,
+  longitude    double precision,
+  recorded_at  timestamptz,
+  employee_name text,
+  employee_code text,
+  status        text,
+  session_id    uuid
+)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public
+AS $$
+  SELECT DISTINCT ON (g.employee_id)
+    g.employee_id,
+    g.latitude,
+    g.longitude,
+    g.recorded_at,
+    e.name          AS employee_name,
+    e.employee_code,
+    els.status,
+    els.session_id
+  FROM gps_locations g
+  JOIN employee_latest_sessions els
+    ON  els.employee_id      = g.employee_id
+    AND els.organization_id  = p_org_id
+    AND els.status IN ('ACTIVE', 'RECENT')
+  JOIN employees e ON e.id = g.employee_id
+  WHERE g.organization_id = p_org_id
+  ORDER BY g.employee_id, g.recorded_at DESC
+  LIMIT p_limit;
+$$;
+
+-- ══════════════════════════════════════════════════════════════
 -- DONE
 -- ══════════════════════════════════════════════════════════════
 -- After running this migration on your new Supabase project:
@@ -729,9 +779,9 @@ $outer$;
 -- 4. No seed data included — this is a clean production schema.
 --
 -- Tables:     11
--- Indexes:    54
+-- Indexes:    55 (54 original + 1 partial: idx_latest_sessions_active)
 -- Triggers:   9
--- Functions:  5
+-- Functions:  6 (5 original + 1: get_active_map_markers)
 -- RLS:        12 policies across all 11 tables
 -- Cron:       1 job (employee-status-refresh, hourly)
 -- Extensions: uuid-ossp, pgcrypto, pg_cron, pg_stat_statements

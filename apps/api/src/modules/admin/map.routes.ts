@@ -5,25 +5,42 @@ import { supabaseServiceClient as supabase } from "../../config/supabase.js";
 import { ok, handleError } from "../../utils/response.js";
 import type { EmployeeMapMarker } from "@fieldtrack/types";
 
+/** Hard safety cap — prevents map from crashing if the org scales rapidly. */
+const MAX_MAP_EMPLOYEES = 1000;
+
+// ─── Row shape returned by the get_active_map_markers RPC function ────────────
+interface MapMarkerRow {
+  employee_id: string;
+  latitude: number;
+  longitude: number;
+  recorded_at: string;
+  employee_name: string;
+  employee_code: string | null;
+  status: string;
+  session_id: string | null;
+}
+
 // ─── Route registration ───────────────────────────────────────────────────────
 
 /**
  * GET /admin/monitoring/map
  *
- * Returns one marker per employee who has at least one recorded GPS point.
- * The coordinates represent the employee's most recent GPS fix (within their
- * latest session, per the employee_latest_sessions snapshot table).
+ * Returns one marker per ACTIVE/RECENT employee who has at least one GPS point.
+ * Uses the `get_active_map_markers` Postgres function which performs a single
+ * DISTINCT ON join:
  *
- * Algorithm:
- *  1. Fetch all employees for the org from employee_latest_sessions snapshot
- *     (O(employees), pre-sorted by status_priority).
- *  2. Collect their session_ids (the latest session per employee).
- *  3. Batch-query gps_locations WHERE session_id IN (...) ordered by
- *     recorded_at DESC.  Deduplicate in JS to keep only the freshest point
- *     per session.
- *  4. Merge snapshot row (name/code/status) with GPS point.
+ *   SELECT DISTINCT ON (g.employee_id)
+ *     g.employee_id, g.latitude, g.longitude, g.recorded_at,
+ *     e.name, e.employee_code, els.status, els.session_id
+ *   FROM gps_locations g
+ *   JOIN employee_latest_sessions els ON els.employee_id = g.employee_id ...
+ *   JOIN employees e ON e.id = g.employee_id
+ *   WHERE g.organization_id = ? AND els.status IN ('ACTIVE','RECENT')
+ *   ORDER BY g.employee_id, g.recorded_at DESC
+ *   LIMIT 1000
  *
- * Employees without any GPS points are omitted — they have nothing to render.
+ * This replaces the previous two-query approach (snapshot + IN-clause GPS)
+ * which overflowed PostgREST URL limits at scale.
  */
 export async function adminMapRoutes(app: FastifyInstance): Promise<void> {
   app.get(
@@ -38,96 +55,46 @@ export async function adminMapRoutes(app: FastifyInstance): Promise<void> {
       try {
         const orgId = request.organizationId;
 
-        // Step 1 — fetch snapshot for ACTIVE and RECENT employees only.
-        // Showing all 5000+ INACTIVE employees on a live map is not useful and
-        // would send thousands of session IDs in the GPS IN-clause, overflowing
-        // PostgREST's URL length limit. The monitoring map shows employees who
-        // are currently working or recently active.
-        const { data: snapshots, error: snapError } = await supabase
-          .from("employee_latest_sessions")
-          .select("employee_id, organization_id, session_id, status, employees!employee_latest_sessions_employee_id_fkey(name, employee_code)")
-          .eq("organization_id", orgId)
-          .in("status", ["ACTIVE", "RECENT"])
-          .order("status", { ascending: true });
+        // Single DISTINCT ON join via Postgres function — O(active employees)
+        // with no large IN-clause; uses idx_latest_sessions_active partial index.
+        const queryStart = Date.now();
+        const { data, error } = await supabase.rpc("get_active_map_markers", {
+          p_org_id: orgId,
+          p_limit: MAX_MAP_EMPLOYEES,
+        });
+        const durationMs = Date.now() - queryStart;
 
-        if (snapError) {
-          throw new Error(`Map: snapshot query failed: ${snapError.message}`);
+        if (durationMs > 100) {
+          request.log.warn(
+            { route: "/admin/monitoring/map", queryName: "get_active_map_markers", table: "gps_locations", durationMs },
+            "slow DB query",
+          );
         }
 
-        const rows = (snapshots ?? []) as unknown as Array<{
-          employee_id: string;
-          organization_id: string;
-          session_id: string | null;
-          status: string;
-          employees: { name: string; employee_code: string } | null;
-        }>;
-
-        if (rows.length === 0) {
-          return reply.status(200).send(ok([] as EmployeeMapMarker[]));
+        if (error) {
+          throw new Error(`Map: RPC query failed: ${error.message}`);
         }
 
-        // Step 2 — collect non-null session ids
-        const sessionIds = rows
-          .map((r) => r.session_id)
-          .filter((id): id is string => id !== null);
+        const rows = (data ?? []) as MapMarkerRow[];
 
-        if (sessionIds.length === 0) {
-          // No sessions recorded yet — no GPS points possible
-          return reply.status(200).send(ok([] as EmployeeMapMarker[]));
+        // Safety warning if we hit the cap
+        if (rows.length >= MAX_MAP_EMPLOYEES) {
+          request.log.warn(
+            { orgId, count: rows.length, limit: MAX_MAP_EMPLOYEES },
+            "Map marker limit reached — some active employees may be hidden",
+          );
         }
 
-        // Step 3 — batch-query latest GPS points for all sessions
-        const { data: gpsRows, error: gpsError } = await supabase
-          .from("gps_locations")
-          .select("session_id, employee_id, latitude, longitude, recorded_at")
-          .eq("organization_id", orgId)
-          .in("session_id", sessionIds)
-          .order("recorded_at", { ascending: false });
-
-        if (gpsError) {
-          throw new Error(`Map: GPS query failed: ${gpsError.message}`);
-        }
-
-        // Step 4 — deduplicate: keep the first (newest) point per session_id
-        const latestBySession = new Map<
-          string,
-          { employee_id: string; latitude: number; longitude: number; recorded_at: string }
-        >();
-        for (const gps of (gpsRows ?? []) as Array<{
-          session_id: string;
-          employee_id: string;
-          latitude: number;
-          longitude: number;
-          recorded_at: string;
-        }>) {
-          if (!latestBySession.has(gps.session_id)) {
-            latestBySession.set(gps.session_id, {
-              employee_id: gps.employee_id,
-              latitude: gps.latitude,
-              longitude: gps.longitude,
-              recorded_at: gps.recorded_at,
-            });
-          }
-        }
-
-        // Step 5 — merge snapshot + GPS, skip employees with no GPS point
-        const markers: EmployeeMapMarker[] = [];
-        for (const snap of rows) {
-          if (!snap.session_id) continue;
-          const gps = latestBySession.get(snap.session_id);
-          if (!gps) continue; // no GPS recorded in this session
-
-          markers.push({
-            employeeId: snap.employee_id,
-            employeeName: snap.employees?.name ?? "Unknown",
-            employeeCode: snap.employees?.employee_code ?? null,
-            status: snap.status as EmployeeMapMarker["status"],
-            sessionId: snap.session_id,
-            latitude: gps.latitude,
-            longitude: gps.longitude,
-            recordedAt: gps.recorded_at,
-          });
-        }
+        const markers: EmployeeMapMarker[] = rows.map((row) => ({
+          employeeId: row.employee_id,
+          employeeName: row.employee_name ?? "Unknown",
+          employeeCode: row.employee_code ?? null,
+          status: row.status as EmployeeMapMarker["status"],
+          sessionId: row.session_id ?? null,
+          latitude: row.latitude,
+          longitude: row.longitude,
+          recordedAt: row.recorded_at,
+        }));
 
         reply.status(200).send(ok(markers));
       } catch (error) {

@@ -87,16 +87,21 @@ export async function buildApp(): Promise<FastifyInstance> {
     });
   }, { name: "onSend-safety", fastify: "5.x" }));
 
-  // Performance timing — logs every response with method, route, status, and
-  // elapsed ms. Emits an additional WARN for responses slower than 200 ms so
-  // slow endpoints are immediately visible in Grafana/Loki without a query.
+  // Performance timing — logs every response with full correlation context:
+  // requestId, method, route, status, elapsed ms, userId, organizationId.
+  // Emits an additional WARN for responses slower than 200 ms so slow endpoints
+  // are immediately visible in Grafana/Loki without a query.
   app.addHook("onResponse", async (request, reply) => {
     const ms = Math.round(reply.elapsedTime);
     const logPayload = {
+      requestId: request.id,
       method: request.method,
       route: request.routeOptions.url ?? request.url,
       status: reply.statusCode,
       responseTimeMs: ms,
+      // Populated only for authenticated routes — undefined otherwise
+      userId: (request as { user?: { sub?: string } }).user?.sub,
+      organizationId: (request as { organizationId?: string }).organizationId,
     };
     if (ms > 200) {
       request.log.warn(logPayload, "slow response");

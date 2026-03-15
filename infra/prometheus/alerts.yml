@@ -33,6 +33,19 @@ groups:
       summary: "High API latency"
       description: "p95 latency above 1 second"
 
+  - alert: FieldTrackAvgLatencyHigh
+    expr: |
+      sum(rate(http_request_duration_seconds_sum{job=~"fieldtrack-backend.*"}[5m]))
+      /
+      sum(rate(http_request_duration_seconds_count{job=~"fieldtrack-backend.*"}[5m]))
+      > 0.5
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "FieldTrack API latency exceeded threshold"
+      description: "Average response time exceeded 500 ms for 5 minutes"
+
 # ---------------------------------------------------------
 # WORKER ALERTS
 # ---------------------------------------------------------

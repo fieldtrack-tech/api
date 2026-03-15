@@ -119,6 +119,9 @@ export async function adminDashboardRoutes(app: FastifyInstance): Promise<void> 
           activeEmployeeCount,
           recentEmployeeCount,
           inactiveEmployeeCount,
+          // activeEmployeesToday = employees with an open session right now
+          // (same as activeEmployeeCount — no extra query needed)
+          activeEmployeesToday: activeEmployeeCount,
           todaySessionCount,
           todayDistanceKm,
           pendingExpenseCount,

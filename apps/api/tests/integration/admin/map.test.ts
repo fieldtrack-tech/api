@@ -11,41 +11,20 @@ vi.mock("../../../src/workers/distance.queue.js", () => ({
   enqueueDistanceJob: vi.fn().mockResolvedValue(undefined),
 }));
 
-// The map route calls supabaseServiceClient.from() for employee_latest_sessions
-// and gps_locations tables.
+// The map route calls supabaseServiceClient.rpc("get_active_map_markers", ...)
 vi.mock("../../../src/config/supabase.js", () => ({
-  supabaseServiceClient: { from: vi.fn() },
+  supabaseServiceClient: { rpc: vi.fn() },
 }));
 
 import {
   buildTestApp,
   signEmployeeToken,
   signAdminToken,
-  TEST_ORG_ID,
   TEST_EMPLOYEE_ID,
   TEST_SESSION_ID,
 } from "../../setup/test-server.js";
 import { supabaseServiceClient as supabase } from "../../../src/config/supabase.js";
 import type { EmployeeMapMarker } from "@fieldtrack/types";
-
-// ─── Supabase builder factory ─────────────────────────────────────────────────
-
-function makeChainBuilder(result: { data: unknown; error: null | { message: string } }) {
-  const chain: Record<string, unknown> = {};
-  const methods = ["select", "eq", "gte", "in", "order", "range", "limit"];
-  for (const m of methods) {
-    chain[m] = vi.fn().mockReturnValue(chain);
-  }
-  (chain as { then: (r: (v: unknown) => void) => Promise<unknown> }).then = (resolve) =>
-    Promise.resolve(result).then(resolve);
-  return chain as {
-    select: ReturnType<typeof vi.fn>;
-    eq: ReturnType<typeof vi.fn>;
-    in: ReturnType<typeof vi.fn>;
-    order: ReturnType<typeof vi.fn>;
-    then: (r: (v: unknown) => void) => Promise<unknown>;
-  };
-}
 
 // ─── Shared fixtures ──────────────────────────────────────────────────────────
 
@@ -54,56 +33,40 @@ const SESSION_ID_2 = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 const NOW = new Date().toISOString();
 const EARLIER = new Date(Date.now() - 300_000).toISOString(); // 5 min ago
 
-const SNAPSHOT_ROWS = [
+/**
+ * Rows returned by get_active_map_markers — flat, DISTINCT ON already applied
+ * in the DB function. The most recent GPS point per employee is returned directly.
+ */
+const RPC_ROWS = [
   {
-    employee_id: TEST_EMPLOYEE_ID,
-    organization_id: TEST_ORG_ID,
-    session_id: TEST_SESSION_ID,
-    status: "ACTIVE",
-    employees: { name: "Test Employee", employee_code: "EMP001" },
-  },
-  {
-    employee_id: EMPLOYEE_ID_2,
-    organization_id: TEST_ORG_ID,
-    session_id: SESSION_ID_2,
-    status: "RECENT",
-    employees: { name: "Second Employee", employee_code: "EMP002" },
-  },
-];
-
-const GPS_ROWS = [
-  {
-    session_id: TEST_SESSION_ID,
     employee_id: TEST_EMPLOYEE_ID,
     latitude: 1.3521,
     longitude: 103.8198,
     recorded_at: NOW,
-  },
-  {
+    employee_name: "Test Employee",
+    employee_code: "EMP001",
+    status: "ACTIVE",
     session_id: TEST_SESSION_ID,
-    employee_id: TEST_EMPLOYEE_ID,
-    latitude: 1.300,
-    longitude: 103.800,
-    recorded_at: EARLIER, // older — should be ignored for deduplication
   },
   {
-    session_id: SESSION_ID_2,
     employee_id: EMPLOYEE_ID_2,
-    latitude: 1.2800,
-    longitude: 103.8500,
+    latitude: 1.28,
+    longitude: 103.85,
     recorded_at: EARLIER,
+    employee_name: "Second Employee",
+    employee_code: "EMP002",
+    status: "RECENT",
+    session_id: SESSION_ID_2,
   },
-];
+] as const;
 
-function mockMapSupabase(): void {
-  vi.mocked(supabase.from).mockImplementation((table: string) => {
-    if (table === "employee_latest_sessions") {
-      return makeChainBuilder({ data: SNAPSHOT_ROWS, error: null });
-    }
-    if (table === "gps_locations") {
-      return makeChainBuilder({ data: GPS_ROWS, error: null });
-    }
-    return makeChainBuilder({ data: [], error: null });
+type RpcRow = (typeof RPC_ROWS)[number];
+
+function mockMapRpc(rows: readonly RpcRow[] | RpcRow[] = RPC_ROWS): void {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  vi.mocked(supabase.rpc as (...args: unknown[]) => any).mockResolvedValue({
+    data: rows,
+    error: null,
   });
 }
 
@@ -126,7 +89,7 @@ describe("GET /admin/monitoring/map", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockMapSupabase();
+    mockMapRpc();
   });
 
   // ─── Auth & role guards ───────────────────────────────────────────────────
@@ -171,7 +134,7 @@ describe("GET /admin/monitoring/map", () => {
     const marker = body.data.find((m) => m.employeeId === TEST_EMPLOYEE_ID);
 
     expect(marker).toBeDefined();
-    // Should use the newer point (NOW), not the EARLIER one
+    // DISTINCT ON in the RPC function guarantees the most recent GPS point per employee
     expect(marker?.latitude).toBeCloseTo(1.3521);
     expect(marker?.longitude).toBeCloseTo(103.8198);
     expect(marker?.recordedAt).toBe(NOW);
@@ -194,9 +157,7 @@ describe("GET /admin/monitoring/map", () => {
   });
 
   it("returns empty array when no employees exist", async () => {
-    vi.mocked(supabase.from).mockImplementation(() =>
-      makeChainBuilder({ data: [], error: null }),
-    );
+    mockMapRpc([]);
 
     const res = await app.inject({
       method: "GET",
@@ -210,20 +171,9 @@ describe("GET /admin/monitoring/map", () => {
   });
 
   it("omits employees who have no GPS points in their session", async () => {
-    // Only EMP001 has GPS data; EMP002's session has no GPS rows
-    vi.mocked(supabase.from).mockImplementation((table: string) => {
-      if (table === "employee_latest_sessions") {
-        return makeChainBuilder({ data: SNAPSHOT_ROWS, error: null });
-      }
-      if (table === "gps_locations") {
-        // Only include GPS row for EMP001's session
-        return makeChainBuilder({
-          data: [GPS_ROWS[0]],
-          error: null,
-        });
-      }
-      return makeChainBuilder({ data: [], error: null });
-    });
+    // The RPC JOIN naturally excludes employees with no GPS rows.
+    // Simulate this by returning only EMP001's row from the RPC.
+    mockMapRpc([RPC_ROWS[0]]);
 
     const res = await app.inject({
       method: "GET",
@@ -233,15 +183,16 @@ describe("GET /admin/monitoring/map", () => {
 
     const body = res.json<{ data: EmployeeMapMarker[] }>();
     expect(body.data).toHaveLength(1);
-    expect(body.data[0].employeeId).toBe(TEST_EMPLOYEE_ID);
+    expect(body.data[0]!.employeeId).toBe(TEST_EMPLOYEE_ID);
   });
 
+  // ─── Error paths ──────────────────────────────────────────────────────────
+
   it("returns 500 when the snapshot query fails", async () => {
-    vi.mocked(supabase.from).mockImplementation((table: string) => {
-      if (table === "employee_latest_sessions") {
-        return makeChainBuilder({ data: null, error: { message: "DB error" } });
-      }
-      return makeChainBuilder({ data: [], error: null });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.mocked(supabase.rpc as (...args: unknown[]) => any).mockResolvedValue({
+      data: null,
+      error: { message: "DB error" },
     });
 
     const res = await app.inject({
@@ -254,14 +205,10 @@ describe("GET /admin/monitoring/map", () => {
   });
 
   it("returns 500 when the GPS query fails", async () => {
-    vi.mocked(supabase.from).mockImplementation((table: string) => {
-      if (table === "employee_latest_sessions") {
-        return makeChainBuilder({ data: SNAPSHOT_ROWS, error: null });
-      }
-      if (table === "gps_locations") {
-        return makeChainBuilder({ data: null, error: { message: "GPS table unavailable" } });
-      }
-      return makeChainBuilder({ data: [], error: null });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.mocked(supabase.rpc as (...args: unknown[]) => any).mockResolvedValue({
+      data: null,
+      error: { message: "GPS table unavailable" },
     });
 
     const res = await app.inject({

@@ -206,6 +206,8 @@ export interface AdminDashboardData {
   activeEmployeeCount: number;
   recentEmployeeCount: number;
   inactiveEmployeeCount: number;
+  /** Employees with an open session right now (from employee_latest_sessions snapshot). */
+  activeEmployeesToday: number;
   todaySessionCount: number;
   todayDistanceKm: number;
   pendingExpenseCount: number;
