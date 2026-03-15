@@ -1,13 +1,32 @@
 name: FieldTrack Backend CI/CD
 
+# ─── Triggers ────────────────────────────────────────────────────────────────
+# Push: only API-relevant changes trigger the full pipeline on master.
+# PR:   run quality gates so reviewers see test status.
+# Manual: three explicit modes for on-demand operations.
+
 on:
   push:
     branches:
       - master
+    paths:
+      - "apps/api/**"
+      - "packages/types/**"
+      - "infra/**"
+      - ".github/workflows/**"
+      - "package.json"
+      - "package-lock.json"
 
   pull_request:
     branches:
       - master
+    paths:
+      - "apps/api/**"
+      - "packages/types/**"
+      - "infra/**"
+      - ".github/workflows/**"
+      - "package.json"
+      - "package-lock.json"
 
   workflow_dispatch:
     inputs:
@@ -21,10 +40,18 @@ on:
           - smoke-test
           - deploy-and-test
 
+# ─── Shared setup steps (referenced as a comment; jobs inline them) ──────────
+# All quality-gate jobs share the same pattern:
+#   checkout → setup-node (npm cache) → npm ci → build packages/types → work
+
 jobs:
 
-  test:
-    name: Test
+  # ─────────────────────────────────────────────────────────────────────────────
+  # QUALITY GATES — run in parallel on every push / PR
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  typecheck:
+    name: TypeCheck (API)
     runs-on: ubuntu-latest
 
     steps:
@@ -36,27 +63,102 @@ jobs:
         with:
           node-version: "24"
           cache: npm
-          # Cache key based on package-lock.json to correctly restore dependencies.
           cache-dependency-path: "**/package-lock.json"
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          echo "::group::npm ci"
+          T0=$SECONDS
+          npm ci
+          echo "::endgroup::"
+          echo "⏱ install: $((SECONDS - T0))s"
 
-      - name: TypeScript compilation check
-        run: npm run typecheck
+      - name: Build shared types package
+        run: npm run build -w packages/types
 
-      - name: Build (compile TypeScript)
-        run: npm run build
+      - name: TypeScript check (API only — not web)
+        run: |
+          T0=$SECONDS
+          npx tsc -b apps/api --noEmit
+          echo "⏱ typecheck: $((SECONDS - T0))s"
 
-      - name: Run tests
-        working-directory: apps/api
-        run: npm run test
 
-
-  build-and-deploy:
-    name: Build and Deploy
+  unit-tests:
+    name: Unit Tests
     runs-on: ubuntu-latest
-    needs: test
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: "**/package-lock.json"
+
+      - name: Install dependencies
+        run: |
+          echo "::group::npm ci"
+          T0=$SECONDS
+          npm ci
+          echo "::endgroup::"
+          echo "⏱ install: $((SECONDS - T0))s"
+
+      - name: Build shared types package
+        run: npm run build -w packages/types
+
+      - name: Run unit tests
+        working-directory: apps/api
+        run: |
+          T0=$SECONDS
+          npx vitest run tests/unit/
+          echo "⏱ unit tests: $((SECONDS - T0))s"
+
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: "**/package-lock.json"
+
+      - name: Install dependencies
+        run: |
+          echo "::group::npm ci"
+          T0=$SECONDS
+          npm ci
+          echo "::endgroup::"
+          echo "⏱ install: $((SECONDS - T0))s"
+
+      - name: Build shared types package
+        run: npm run build -w packages/types
+
+      - name: Run integration tests
+        working-directory: apps/api
+        run: |
+          T0=$SECONDS
+          npx vitest run tests/integration/
+          echo "⏱ integration tests: $((SECONDS - T0))s"
+
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # BUILD — Docker image (only on push / deploy dispatch, after quality gates)
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  build-image:
+    name: Build & Push Docker Image
+    runs-on: ubuntu-latest
+    needs: [typecheck, unit-tests, integration-tests]
 
     if: |
       github.event_name == 'push' ||
@@ -66,6 +168,9 @@ jobs:
     permissions:
       contents: read
       packages: write
+
+    outputs:
+      sha_short: ${{ steps.sha.outputs.sha_short }}
 
     steps:
       - name: Checkout repository
@@ -94,32 +199,49 @@ jobs:
           tags: |
             ghcr.io/rajashish147/fieldtrack-backend:${{ steps.sha.outputs.sha_short }}
             ghcr.io/rajashish147/fieldtrack-backend:latest
+          # GHA layer cache — dramatically speeds up rebuilds when deps unchanged
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Deploy to VPS (Blue-Green)
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # DEPLOY — Blue-green deployment on the VPS
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  deploy:
+    name: Deploy (Blue-Green)
+    runs-on: ubuntu-latest
+    needs: [build-image]
+
+    steps:
+      - name: Deploy to VPS
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.DO_HOST }}
           username: ${{ secrets.DO_USER }}
           key: ${{ secrets.DO_SSH_KEY }}
           script: |
+            set -euo pipefail
+            T0=$(date +%s)
             cd /home/ashish/FieldTrack-2.0
             git fetch origin
             git reset --hard origin/master
             chmod +x apps/api/scripts/deploy-bluegreen.sh
-            ./apps/api/scripts/deploy-bluegreen.sh "${{ steps.sha.outputs.sha_short }}"
+            ./apps/api/scripts/deploy-bluegreen.sh "${{ needs.build-image.outputs.sha_short }}"
+            echo "⏱ deploy completed in $(($(date +%s) - T0))s"
 
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # INFRASTRUCTURE SYNC — nginx + monitoring configs
+  # Runs after every deploy to ensure VPS always mirrors the repository.
+  # Monitoring stack restart is CONDITIONAL on config file hash changes —
+  # avoids unnecessary restarts when only application code changed.
+  # ─────────────────────────────────────────────────────────────────────────────
 
   sync-infra:
-    name: Sync Infrastructure Configs
+    name: Sync Infrastructure
     runs-on: ubuntu-latest
-    needs: build-and-deploy
-
-    if: |
-      github.event_name == 'push' ||
-      github.event.inputs.mode == 'deploy' ||
-      github.event.inputs.mode == 'deploy-and-test'
+    needs: [deploy]
 
     steps:
       - name: Sync nginx + monitoring configs on VPS
@@ -130,17 +252,19 @@ jobs:
           key: ${{ secrets.DO_SSH_KEY }}
           script: |
             set -euo pipefail
+            T0=$(date +%s)
             REPO_DIR="/home/ashish/FieldTrack-2.0"
             INFRA_DIR="$REPO_DIR/infra"
             NGINX_LIVE="/etc/nginx/sites-enabled/fieldtrack.conf"
             ACTIVE_SLOT_FILE="$HOME/.fieldtrack-active-slot"
+            INFRA_HASH_FILE="$HOME/.fieldtrack-infra-hash"
 
             # ── Nginx ──────────────────────────────────────────────────────────
             echo "=== Syncing Nginx config ==="
-            # Back up outside sites-enabled — nginx parses everything in that dir
+            # Back up current config before overwriting
             sudo cp "$NGINX_LIVE" /tmp/fieldtrack.conf.bak 2>/dev/null || true
 
-            # Copy fresh config from repo (baseline always has blue port 3001)
+            # Apply repo baseline (always has blue port 3001 as default)
             sudo cp "$INFRA_DIR/nginx/fieldtrack.conf" "$NGINX_LIVE"
 
             # Re-apply the current active slot so nginx keeps routing correctly
@@ -156,23 +280,59 @@ jobs:
             sudo systemctl reload nginx
             echo "Nginx reloaded."
 
-            # ── Monitoring stack ────────────────────────────────────────────────
-            echo "=== Restarting monitoring stack ==="
-            cd "$INFRA_DIR"
-            docker compose -f docker-compose.monitoring.yml pull
-            docker compose -f docker-compose.monitoring.yml up -d
-            echo "Monitoring stack restarted."
+            # ── Monitoring stack (conditional on config hash) ─────────────────
+            # Hash all non-nginx config files under /infra to detect changes.
+            # Only restarts Prometheus / Grafana / Loki stack when configs change,
+            # preventing unnecessary restarts on code-only deploys.
+            echo "=== Checking monitoring config hash ==="
+            CURRENT_HASH=$(find "$INFRA_DIR" \
+              \( -name "*.yml" -o -name "*.yaml" -o -name "*.conf" -o -name "*.toml" -o -name "*.json" \) \
+              -not -path "$INFRA_DIR/nginx/*" \
+              | sort | xargs sha256sum 2>/dev/null | sha256sum | cut -d' ' -f1)
+            STORED_HASH=$(cat "$INFRA_HASH_FILE" 2>/dev/null || echo "")
 
+            if [ "$CURRENT_HASH" != "$STORED_HASH" ]; then
+              echo "Monitoring configs changed — restarting stack..."
+              cd "$INFRA_DIR"
+              docker compose -f docker-compose.monitoring.yml pull --quiet
+              docker compose -f docker-compose.monitoring.yml up -d
+              echo "$CURRENT_HASH" > "$INFRA_HASH_FILE"
+              echo "Monitoring stack updated."
+            else
+              echo "Monitoring configs unchanged — skipping restart."
+            fi
+
+            echo "⏱ infra sync completed in $(($(date +%s) - T0))s"
+
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # SMOKE TESTS — verify live API after deploy
+  # Also runs standalone (mode=smoke-test) against an already-deployed API.
+  # jq is pre-installed on ubuntu-latest — no apt-get install required.
+  # ─────────────────────────────────────────────────────────────────────────────
 
   smoke-tests:
     name: API Smoke Tests
     runs-on: ubuntu-latest
-    needs: sync-infra
+    needs: [sync-infra]
 
+    # Run after a successful deploy/sync-infra, OR standalone in smoke-test mode
+    # when sync-infra was skipped (no new deploy, just validating existing API).
     if: |
-      github.event.inputs.mode == 'smoke-test' ||
-      github.event.inputs.mode == 'deploy-and-test' ||
-      github.event_name == 'push'
+      always() &&
+      !cancelled() &&
+      (
+        needs.sync-infra.result == 'success' ||
+        (
+          github.event.inputs.mode == 'smoke-test' &&
+          needs.sync-infra.result == 'skipped'
+        )
+      ) &&
+      (
+        github.event_name == 'push' ||
+        github.event.inputs.mode == 'smoke-test' ||
+        github.event.inputs.mode == 'deploy-and-test'
+      )
 
     steps:
       - name: Checkout repository
@@ -180,24 +340,17 @@ jobs:
 
       - name: Wait for API health
         run: |
-          echo "Waiting for API..."
-
-          for i in {1..30}; do
+          echo "Waiting for API to become healthy..."
+          for i in $(seq 1 30); do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://api.fieldtrack.meowsician.tech/health)
-
             if [ "$STATUS" = "200" ]; then
-              echo "API is healthy"
+              echo "✓ API healthy (attempt $i)"
               exit 0
             fi
-
             sleep 2
           done
-
-          echo "API did not become healthy"
+          echo "✗ API did not become healthy after 60s"
           exit 1
-
-      - name: Install jq (needed for JSON parsing)
-        run: sudo apt-get update && sudo apt-get install -y jq
 
       - name: Run API Smoke Tests
         env:
@@ -209,21 +362,37 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
+          T0=$SECONDS
           chmod +x apps/api/scripts/smoke-test.sh
           ./apps/api/scripts/smoke-test.sh
+          echo "⏱ smoke tests: $((SECONDS - T0))s"
 
       - name: Upload smoke test report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: smoke-test-report
           path: smoke-report.json
 
 
+  # ─────────────────────────────────────────────────────────────────────────────
+  # AUTO-ROLLBACK — triggers on deploy, infra-sync, or smoke-test failure.
+  # Skipped in smoke-test-only mode (nothing was deployed to roll back).
+  # ─────────────────────────────────────────────────────────────────────────────
+
   rollback:
     name: Rollback Deployment
     runs-on: ubuntu-latest
-    needs: [sync-infra, smoke-tests]
-    if: failure()
+    needs: [deploy, sync-infra, smoke-tests]
+
+    if: |
+      always() &&
+      github.event.inputs.mode != 'smoke-test' &&
+      (
+        needs.deploy.result == 'failure' ||
+        needs.sync-infra.result == 'failure' ||
+        needs.smoke-tests.result == 'failure'
+      )
 
     steps:
       - name: Rollback on VPS
@@ -236,3 +405,4 @@ jobs:
             cd /home/ashish/FieldTrack-2.0
             chmod +x apps/api/scripts/rollback.sh
             ./apps/api/scripts/rollback.sh --auto
+
