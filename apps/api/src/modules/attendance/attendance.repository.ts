@@ -274,26 +274,46 @@ export const attendanceRepository = {
 
   /**
    * Upsert the employee_latest_sessions snapshot row for one employee.
-   * Called on check-in and check-out.  Delegates status/priority derivation
-   * and employee name lookup to the upsert_employee_latest_session DB function
-   * so that logic stays in one place.
+   * Called on check-in and check-out as belt-and-suspenders alongside the
+   * DB trigger (trg_update_employee_latest_session) that fires on
+   * attendance_sessions INSERT/UPDATE.
    * Fire-and-forget safe — caller may choose not to await.
+   *
+   * Previously called supabase.rpc("upsert_employee_latest_session") which
+   * does not exist in the current DB schema. Now uses a direct upsert so the
+   * application path is consistent with the trigger logic.
    */
   async upsertLatestSession(
     organizationId: string,
     employeeId: string,
     session: AttendanceSession,
   ): Promise<void> {
-    const { error } = await supabase.rpc("upsert_employee_latest_session", {
-      p_session_id: session.id,
-      p_organization_id: organizationId,
-      p_employee_id: employeeId,
-      p_checkin_at: session.checkin_at,
-      p_checkout_at: session.checkout_at ?? null,
-      p_total_distance_km: session.total_distance_km ?? null,
-      p_total_duration_seconds: session.total_duration_seconds ?? null,
-      p_distance_recalculation_status: session.distance_recalculation_status ?? "pending",
-    });
+    const ageMs = session.checkout_at
+      ? Date.now() - new Date(session.checkout_at).getTime()
+      : null;
+    const status =
+      session.checkout_at === null
+        ? "ACTIVE"
+        : ageMs !== null && ageMs < 86_400_000
+          ? "RECENT"
+          : "INACTIVE";
+
+    const { error } = await supabase
+      .from("employee_latest_sessions")
+      .upsert(
+        {
+          employee_id: employeeId,
+          organization_id: organizationId,
+          session_id: session.id,
+          latest_checkin: session.checkin_at,
+          latest_checkout: session.checkout_at ?? null,
+          total_distance_km: session.total_distance_km ?? null,
+          total_duration_seconds: session.total_duration_seconds ?? null,
+          status,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "employee_id" },
+      );
     if (error) {
       throw new Error(`Failed to upsert latest session snapshot: ${error.message}`);
     }

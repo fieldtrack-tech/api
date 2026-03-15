@@ -39,12 +39,11 @@ export async function adminMapRoutes(app: FastifyInstance): Promise<void> {
         const orgId = request.organizationId;
 
         // Step 1 — fetch snapshot (all employees, ordered ACTIVE → RECENT → INACTIVE).
-        // SELECT * so the query works regardless of whether the production table
-        // has employee_name/employee_code columns (they are absent in the
-        // authoritative schema; the TS cast handles undefined gracefully).
+        // Join employees to get name/code — employee_latest_sessions does not store
+        // these columns directly; they live on the employees table.
         const { data: snapshots, error: snapError } = await supabase
           .from("employee_latest_sessions")
-          .select("*")
+          .select("employee_id, organization_id, session_id, status, employees!employee_latest_sessions_employee_id_fkey(name, employee_code)")
           .eq("organization_id", orgId)
           .order("status", { ascending: true });
 
@@ -52,12 +51,12 @@ export async function adminMapRoutes(app: FastifyInstance): Promise<void> {
           throw new Error(`Map: snapshot query failed: ${snapError.message}`);
         }
 
-        const rows = (snapshots ?? []) as Array<{
+        const rows = (snapshots ?? []) as unknown as Array<{
           employee_id: string;
-          employee_name: string | null;
-          employee_code: string | null;
-          status: string;
+          organization_id: string;
           session_id: string | null;
+          status: string;
+          employees: { name: string; employee_code: string } | null;
         }>;
 
         if (rows.length === 0) {
@@ -117,8 +116,8 @@ export async function adminMapRoutes(app: FastifyInstance): Promise<void> {
 
           markers.push({
             employeeId: snap.employee_id,
-            employeeName: snap.employee_name ?? "Unknown",
-            employeeCode: snap.employee_code,
+            employeeName: snap.employees?.name ?? "Unknown",
+            employeeCode: snap.employees?.employee_code ?? null,
             status: snap.status as EmployeeMapMarker["status"],
             sessionId: snap.session_id,
             latitude: gps.latitude,

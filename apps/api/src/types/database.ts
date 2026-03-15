@@ -541,6 +541,7 @@ export type Database = {
           total_sessions: number
           total_distance_km: number
           total_duration_seconds: number
+          active_employees: number
           created_at: string
           updated_at: string
         }
@@ -551,6 +552,7 @@ export type Database = {
           total_sessions?: number
           total_distance_km?: number
           total_duration_seconds?: number
+          active_employees?: number
           created_at?: string
           updated_at?: string
         }
@@ -561,6 +563,7 @@ export type Database = {
           total_sessions?: number
           total_distance_km?: number
           total_duration_seconds?: number
+          active_employees?: number
           created_at?: string
           updated_at?: string
         }
@@ -579,7 +582,30 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      get_org_latest_sessions: {
+        Args: {
+          p_org_id: string
+          p_status?: string
+          p_limit?: number
+          p_offset?: number
+        }
+        Returns: Array<{
+          id: string
+          employee_id: string
+          organization_id: string
+          checkin_at: string
+          checkout_at: string | null
+          total_distance_km: number | null
+          total_duration_seconds: number | null
+          distance_recalculation_status: string
+          created_at: string
+          updated_at: string
+          employee_code: string
+          employee_name: string
+          activity_status: string
+          total_count: number
+        }>
+      }
     }
     Enums: {
       distance_job_status: "pending" | "processing" | "done" | "failed"

@@ -3,7 +3,6 @@ import { authenticate } from "../../middleware/auth.js";
 import { requireRole } from "../../middleware/role-guard.js";
 import { supabaseServiceClient as supabase } from "../../config/supabase.js";
 import { ok, handleError } from "../../utils/response.js";
-import { expensesRepository } from "../expenses/expenses.repository.js";
 import type { AdminDashboardData } from "@fieldtrack/types";
 
 // ─── Route registration ───────────────────────────────────────────────────────
@@ -37,7 +36,7 @@ export async function adminDashboardRoutes(app: FastifyInstance): Promise<void> 
         todayStart.setUTCHours(0, 0, 0, 0);
         const todayStartISO = todayStart.toISOString();
 
-        const [activeCountResult, recentCountResult, totalCountResult, todayResult, expenseSummary] = await Promise.all([
+        const [activeCountResult, recentCountResult, totalCountResult, todayResult, pendingExpensesResult] = await Promise.all([
           // Count-only queries — head:true means no row data is transferred, only the count.
           // This is O(employees) via the snapshot index and correct for any org size.
           supabase
@@ -64,8 +63,13 @@ export async function adminDashboardRoutes(app: FastifyInstance): Promise<void> 
             .eq("organization_id", orgId)
             .gte("checkin_at", todayStartISO),
 
-          // Pending expenses summary
-          expensesRepository.findExpenseSummaryByEmployee(request, 1, 5000),
+          // Pending expenses — O(pending) targeted query instead of O(all expenses).
+          // Only fetches the amount column for pending expenses to compute totals.
+          supabase
+            .from("expenses")
+            .select("amount")
+            .eq("organization_id", orgId)
+            .eq("status", "PENDING"),
         ]);
 
         const snapshotError = activeCountResult.error ?? recentCountResult.error ?? totalCountResult.error;
@@ -74,6 +78,9 @@ export async function adminDashboardRoutes(app: FastifyInstance): Promise<void> 
         }
         if (todayResult.error) {
           throw new Error(`Dashboard: today sessions query failed: ${todayResult.error.message}`);
+        }
+        if (pendingExpensesResult.error) {
+          throw new Error(`Dashboard: pending expenses query failed: ${pendingExpensesResult.error.message}`);
         }
 
         // Derive counts from the three parallel count queries
@@ -88,14 +95,12 @@ export async function adminDashboardRoutes(app: FastifyInstance): Promise<void> 
           todaySessions.reduce((sum, s) => sum + (s.total_distance_km ?? 0), 0) * 100,
         ) / 100;
 
-        // Pending expense totals
-        let pendingExpenseCount = 0;
-        let pendingExpenseAmount = 0;
-        for (const emp of expenseSummary.data) {
-          pendingExpenseCount += emp.pendingCount;
-          pendingExpenseAmount += emp.pendingAmount;
-        }
-        pendingExpenseAmount = Math.round(pendingExpenseAmount * 100) / 100;
+        // Pending expense totals — direct sum over pending-only rows (O(pending))
+        const pendingExpenses = (pendingExpensesResult.data ?? []) as Array<{ amount: number }>;
+        const pendingExpenseCount = pendingExpenses.length;
+        const pendingExpenseAmount = Math.round(
+          pendingExpenses.reduce((sum, e) => sum + Number(e.amount), 0) * 100,
+        ) / 100;
 
         const result: AdminDashboardData = {
           activeEmployeeCount,

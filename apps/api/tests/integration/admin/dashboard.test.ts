@@ -12,21 +12,9 @@ vi.mock("../../../src/workers/distance.queue.js", () => ({
 }));
 
 // The dashboard route calls supabaseServiceClient.from() directly for
-// employee_latest_sessions and attendance_sessions queries.
+// employee_latest_sessions, attendance_sessions, and expenses queries.
 vi.mock("../../../src/config/supabase.js", () => ({
   supabaseServiceClient: { from: vi.fn() },
-}));
-
-// The dashboard route also calls expensesRepository.findExpenseSummaryByEmployee.
-vi.mock("../../../src/modules/expenses/expenses.repository.js", () => ({
-  expensesRepository: {
-    createExpense: vi.fn(),
-    findExpenseById: vi.fn(),
-    findExpensesByUser: vi.fn(),
-    findExpensesByOrg: vi.fn(),
-    updateExpenseStatus: vi.fn(),
-    findExpenseSummaryByEmployee: vi.fn(),
-  },
 }));
 
 import {
@@ -36,8 +24,6 @@ import {
   TEST_ORG_ID,
 } from "../../setup/test-server.js";
 import { supabaseServiceClient as supabase } from "../../../src/config/supabase.js";
-import { expensesRepository } from "../../../src/modules/expenses/expenses.repository.js";
-import type { EmployeeExpenseSummary } from "@fieldtrack/types";
 
 // ─── Supabase query builder factory ──────────────────────────────────────────
 
@@ -73,24 +59,16 @@ function makeChainBuilder(result: { data: unknown; error: null | { message: stri
 
 // ─── Default fixture data ─────────────────────────────────────────────────────
 
-const NOW = new Date().toISOString();
-
 const TODAY_SESSIONS = [
   { id: "s1", total_distance_km: 12.5 },
   { id: "s2", total_distance_km: 7.3 },
 ];
 
-const EXPENSE_SUMMARY: EmployeeExpenseSummary[] = [
-  {
-    employeeId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-    employeeName: "Test Employee",
-    employeeCode: "EMP001",
-    pendingCount: 3,
-    pendingAmount: 225.0,
-    totalCount: 5,
-    totalAmount: 450.0,
-    latestExpenseDate: NOW,
-  },
+// Three pending expense rows totalling 225.00
+const PENDING_EXPENSES = [
+  { amount: 100 },
+  { amount: 75 },
+  { amount: 50 },
 ];
 
 // ─── Helper: set up supabase.from mock for one test ──────────────────────────
@@ -118,12 +96,10 @@ function mockDashboardSupabase(
     if (table === "attendance_sessions") {
       return makeChainBuilder({ data: TODAY_SESSIONS, error: null });
     }
+    if (table === "expenses") {
+      return makeChainBuilder({ data: PENDING_EXPENSES, error: null });
+    }
     return makeChainBuilder({ data: [], error: null });
-  });
-
-  vi.mocked(expensesRepository.findExpenseSummaryByEmployee).mockResolvedValue({
-    data: EXPENSE_SUMMARY,
-    total: 1,
   });
 }
 
@@ -202,10 +178,6 @@ describe("GET /admin/dashboard", () => {
     vi.mocked(supabase.from).mockImplementation(() =>
       makeChainBuilder({ data: [], error: null }),
     );
-    vi.mocked(expensesRepository.findExpenseSummaryByEmployee).mockResolvedValue({
-      data: [],
-      total: 0,
-    });
 
     const res = await app.inject({
       method: "GET",
@@ -248,5 +220,6 @@ describe("GET /admin/dashboard", () => {
     // (We just verify from() was called at minimum once per table)
     expect(supabase.from).toHaveBeenCalledWith("employee_latest_sessions");
     expect(supabase.from).toHaveBeenCalledWith("attendance_sessions");
+    expect(supabase.from).toHaveBeenCalledWith("expenses");
   });
 });

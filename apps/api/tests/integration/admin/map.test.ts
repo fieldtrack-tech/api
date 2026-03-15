@@ -57,17 +57,17 @@ const EARLIER = new Date(Date.now() - 300_000).toISOString(); // 5 min ago
 const SNAPSHOT_ROWS = [
   {
     employee_id: TEST_EMPLOYEE_ID,
-    employee_name: "Test Employee",
-    employee_code: "EMP001",
-    status: "ACTIVE",
+    organization_id: TEST_ORG_ID,
     session_id: TEST_SESSION_ID,
+    status: "ACTIVE",
+    employees: { name: "Test Employee", employee_code: "EMP001" },
   },
   {
     employee_id: EMPLOYEE_ID_2,
-    employee_name: "Second Employee",
-    employee_code: "EMP002",
-    status: "RECENT",
+    organization_id: TEST_ORG_ID,
     session_id: SESSION_ID_2,
+    status: "RECENT",
+    employees: { name: "Second Employee", employee_code: "EMP002" },
   },
 ];
 
