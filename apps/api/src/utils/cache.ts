@@ -23,15 +23,59 @@ cacheClient.on("error", (err: Error) => {
   console.error("[cache] Redis error:", err.message);
 });
 
+// ─── L1: in-process memory cache ─────────────────────────────────────────────
+//
+// Acts as a write-through layer in front of Redis (L2).  A hit here costs
+// ~0.1 ms (Map lookup + JSON parse) vs ~2 ms for a Redis round-trip or
+// ~150–400 ms for a Supabase query.
+//
+// Crucially this layer works even when Redis is unreachable: the very first
+// request for a key fills L1, and ALL subsequent requests in the same process
+// — including 49 concurrent VUs polling the same endpoint — read from memory.
+//
+// Design:
+//  - Bounded at L1_MAX entries; evicts the oldest key (insertion-order Map).
+//  - TTL is stored as an absolute expiry timestamp (Date.now() + ttl * 1000).
+//  - invalidateOrgAnalytics() clears matching keys via a prefix sweep.
+
+const L1_MAX = 1000;
+const l1Cache = new Map<string, { val: string; exp: number }>();
+
+function l1Get(key: string): string | null {
+  const entry = l1Cache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.exp) {
+    l1Cache.delete(key);
+    return null;
+  }
+  return entry.val;
+}
+
+function l1Set(key: string, val: string, ttlSeconds: number): void {
+  if (l1Cache.size >= L1_MAX) {
+    // Map preserves insertion order — delete the first (oldest) entry.
+    l1Cache.delete(l1Cache.keys().next().value!);
+  }
+  l1Cache.set(key, { val, exp: Date.now() + ttlSeconds * 1000 });
+}
+
+/** Delete all L1 entries whose key starts with `prefix`. */
+function l1DelPrefix(prefix: string): void {
+  for (const key of l1Cache.keys()) {
+    if (key.startsWith(prefix)) l1Cache.delete(key);
+  }
+}
+
 /**
  * Cache-aside helper with JSON serialisation.
  *
- * 1. Attempts to read `key` from Redis.
- * 2. On cache hit: parses and returns the stored value.
- * 3. On cache miss or Redis error: executes `fn`, stores the result with
- *    `ttlSeconds`, and returns the result.
+ * Read path:  L1 (process memory) → L2 (Redis) → factory (DB)
+ * Write path: always writes to both L1 and L2 on a miss.
  *
- * Type parameter T is the shape of the underlying value.
+ * L1 ensures that even when Redis is unreachable (e.g. wrong host in Docker),
+ * warm reads within the same process are sub-millisecond.  The very first
+ * request for a key hits the DB; all subsequent requests in the same process
+ * are served from L1 until the TTL expires.
  *
  * @param key        Cache key (namespaced by caller)
  * @param ttlSeconds TTL in seconds; use 300 for the standard 5-minute analytics TTL
@@ -42,19 +86,28 @@ export async function getCached<T>(
   ttlSeconds: number,
   fn: () => Promise<T>,
 ): Promise<T> {
+  // ── L1: in-process memory (sub-millisecond) ──────────────────────────────
+  const l1 = l1Get(key);
+  if (l1 !== null) return JSON.parse(l1) as T;
+
+  // ── L2: Redis ────────────────────────────────────────────────────────────
   try {
     const cached = await cacheClient.get(key);
     if (cached !== null) {
+      l1Set(key, cached, ttlSeconds); // back-fill L1 for the next request
       return JSON.parse(cached) as T;
     }
   } catch {
     // Redis read failure — fall through to source
   }
 
+  // ── Source: factory (DB query) ───────────────────────────────────────────
   const result = await fn();
+  const json = JSON.stringify(result);
 
+  l1Set(key, json, ttlSeconds); // always populate L1
   try {
-    await cacheClient.set(key, JSON.stringify(result), "EX", ttlSeconds);
+    await cacheClient.set(key, json, "EX", ttlSeconds);
   } catch {
     // Redis write failure — non-fatal; result is still returned to caller
   }
@@ -80,6 +133,9 @@ export const ANALYTICS_CACHE_TTL = 300;
  *  - Expense submission
  */
 export async function invalidateOrgAnalytics(orgId: string): Promise<void> {
+  // Always clear L1 immediately — no network required, safe even when Redis is down.
+  l1DelPrefix(`org:${orgId}:`);
+
   try {
     // Helper: SCAN a Redis key pattern and delete all matching keys.
     const scanAndDelete = async (pattern: string): Promise<void> => {

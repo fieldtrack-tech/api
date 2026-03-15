@@ -102,33 +102,40 @@ export async function authenticate(
                 `auth:user:${userId}`,
                 300, // 5-minute TTL
                 async () => {
-                    const { data: userData, error: userError } = await supabaseServiceClient
-                        .from("users")
-                        .select("organization_id")
-                        .eq("id", userId)
-                        .single();
+                    // Run both queries in parallel — users.id is globally unique
+                    // so we don't need organization_id from users to scope the
+                    // employees query.  We validate org consistency afterwards.
+                    const [userResult, employeeResult] = await Promise.all([
+                        supabaseServiceClient
+                            .from("users")
+                            .select("organization_id")
+                            .eq("id", userId)
+                            .single(),
+                        supabaseServiceClient
+                            .from("employees")
+                            .select("id, organization_id")
+                            .eq("user_id", userId)
+                            .eq("is_active", true)
+                            .limit(1)
+                            .maybeSingle(),
+                    ]);
 
-                    if (userError || !userData) {
-                        request.log.warn({ sub: userId, error: userError }, "User not found in database");
+                    if (userResult.error || !userResult.data) {
+                        request.log.warn({ sub: userId, error: userResult.error }, "User not found in database");
                         throw new UnauthorizedError("User not found");
                     }
 
-                    // Step 3b: Resolve employees.id for this user (once, upfront).
-                    // EMPLOYEE routes need employees.id (employees.id ≠ users.id).
-                    // ADMIN users may not have an employees row — undefined is expected.
-                    const { data: employeeData } = await supabaseServiceClient
-                        .from("employees")
-                        .select("id")
-                        .eq("user_id", userId)
-                        .eq("organization_id", userData.organization_id)
-                        .eq("is_active", true)
-                        .limit(1)
-                        .maybeSingle();
+                    const orgId = userResult.data.organization_id;
 
-                    return {
-                        organizationId: userData.organization_id,
-                        employeeId: employeeData?.id ?? undefined,
-                    };
+                    // Only accept the employee row if it belongs to the same org
+                    // (defence-in-depth: a user_id should never straddle two orgs).
+                    const empRow = employeeResult.data;
+                    const employeeId =
+                        empRow && empRow.organization_id === orgId
+                            ? (empRow.id as string)
+                            : undefined;
+
+                    return { organizationId: orgId, employeeId };
                 },
             );
 
