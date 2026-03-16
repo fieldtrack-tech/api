@@ -11,6 +11,7 @@ import {
 import type { AttendanceSession } from "./attendance.schema.js";
 import type { EnrichedAttendanceSession } from "./attendance.repository.js";
 import { profileRepository } from "../profile/profile.repository.js";
+import { sseEventBus } from "../../utils/sse-emitter.js";
 
 /**
  * Attendance service — business logic for check-in/check-out.
@@ -45,6 +46,11 @@ export const attendanceService = {
         request.log.warn({ sessionId: session.id, error: msg }, "Failed to upsert latest session snapshot after check-in");
       });
 
+    sseEventBus.emitOrgEvent(request.organizationId, "session.checkin", {
+      sessionId: session.id,
+      employeeId,
+    });
+
     return session;
   },
 
@@ -68,6 +74,11 @@ export const attendanceService = {
         const msg = err instanceof Error ? err.message : String(err);
         request.log.warn({ sessionId: closedSession.id, error: msg }, "Failed to upsert latest session snapshot after check-out");
       });
+
+    sseEventBus.emitOrgEvent(request.organizationId, "session.checkout", {
+      sessionId: closedSession.id,
+      employeeId,
+    });
 
     enqueueDistanceJob(closedSession.id).catch((err: unknown) => {
       const message = err instanceof Error ? err.message : String(err);

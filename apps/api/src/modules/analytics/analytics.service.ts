@@ -74,11 +74,13 @@ export const analyticsService = {
   /**
    * Org-wide summary for a given date range.
    *
-   * Strategy:
-   *  1. Resolve sessions from attendance_sessions within the date range (org-scoped).
-   *  2. Aggregate pre-computed distance/duration directly from attendance_sessions rows.
-   *  3. Aggregate expenses within the same date range.
-   *  4. All aggregation happens in application memory — rows are minimal and bounded.
+   * Phase 1 optimization: Session stats (count, distance, duration) are now read
+   * from org_daily_metrics (pre-aggregated by the analytics worker) instead of
+   * scanning attendance_sessions rows directly.  This eliminates the limit(5000)
+   * ceiling and makes the query O(days-in-range) instead of O(sessions).
+   *
+   * Expense stats and active employee count are still fetched in real-time since
+   * they are not included in org_daily_metrics.
    */
   async getOrgSummary(
     request: FastifyRequest,
@@ -89,20 +91,24 @@ export const analyticsService = {
 
     const cacheKey = `org:${request.organizationId}:analytics:summary:${from ?? "all"}:${to ?? "all"}`;
     return getCached(cacheKey, ANALYTICS_CACHE_TTL, async () => {
-      // Step 1: sessions in range — includes pre-computed distance and duration
-      const sessions = await analyticsRepository.getSessionsInRange(
+      // Step 1: aggregate session stats from pre-computed org_daily_metrics.
+      // Date filter uses YYYY-MM-DD format; from/to are full ISO datetimes so
+      // we strip to the date portion for the gte/lte comparison.
+      const dailyFrom = from ? from.substring(0, 10) : undefined;
+      const dailyTo = to ? to.substring(0, 10) : undefined;
+      const dailyMetrics = await analyticsRepository.getOrgDailyMetrics(
         request,
-        from,
-        to,
+        dailyFrom,
+        dailyTo,
       );
 
-      const totalSessions = sessions.length;
+      let totalSessions = 0;
       let totalDistanceKm = 0;
       let totalDurationSeconds = 0;
-
-      for (const row of sessions) {
-        totalDistanceKm += row.total_distance_km ?? 0;
-        totalDurationSeconds += row.total_duration_seconds ?? 0;
+      for (const row of dailyMetrics) {
+        totalSessions += row.sessions ?? 0;
+        totalDistanceKm += row.distance ?? 0;
+        totalDurationSeconds += row.duration ?? 0;
       }
 
       // Step 2: expense aggregation and active employee count — independent, run in parallel
@@ -186,22 +192,18 @@ export const analyticsService = {
       };
     }
 
-    // Resolve this user's sessions in the date range — includes pre-computed metrics
-    const sessions = await analyticsRepository.getSessionsForUser(
-      request,
-      employeeId,  // ← employees.id, resolved above
-      from,
-      to,
-    );
-
-    const sessionsCount = sessions.length;
-    let totalDistanceKm = 0;
-    let totalDurationSeconds = 0;
-
-    for (const row of sessions) {
-      totalDistanceKm += row.total_distance_km ?? 0;
-      totalDurationSeconds += row.total_duration_seconds ?? 0;
-    }
+    // Phase 1 optimization: Use employee_daily_metrics (pre-aggregated) instead of
+    // scanning attendance_sessions rows. O(days-in-range) vs O(sessions-in-range).
+    // Date filter strips ISO timestamps to YYYY-MM-DD for the daily_metrics table.
+    const dailyFrom = from ? from.substring(0, 10) : undefined;
+    const dailyTo = to ? to.substring(0, 10) : undefined;
+    const { totalSessions: sessionsCount, totalDistanceKm, totalDurationSeconds } =
+      await analyticsRepository.getEmployeeMetricsForUser(
+        request,
+        employeeId,
+        dailyFrom,
+        dailyTo,
+      );
 
     // Expense aggregation for this user in the same date range
     const expenseRows = await analyticsRepository.getExpensesForUser(

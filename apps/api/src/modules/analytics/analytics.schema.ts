@@ -72,6 +72,69 @@ export type MinimalExpenseRow = Pick<Expense,
   "amount" | "status"
 >;
 
+// ─── OpenAPI / runtime response schemas (Zod) ────────────────────────────────
+
+export const orgSummaryResponseSchema = z.object({
+  success: z.literal(true),
+  data: z.object({
+    totalSessions: z.number(),
+    totalDistanceKm: z.number(),
+    totalDurationSeconds: z.number(),
+    totalExpenses: z.number(),
+    approvedExpenseAmount: z.number(),
+    rejectedExpenseAmount: z.number(),
+    activeEmployeesCount: z.number(),
+  }).describe("Org-level aggregate analytics for the requested date range"),
+});
+
+export const userSummaryResponseSchema = z.object({
+  success: z.literal(true),
+  data: z.object({
+    sessionsCount: z.number(),
+    totalDistanceKm: z.number(),
+    totalDurationSeconds: z.number(),
+    totalExpenses: z.number(),
+    approvedExpenseAmount: z.number(),
+    averageDistancePerSession: z.number(),
+    averageSessionDurationSeconds: z.number(),
+  }).describe("Per-employee aggregate analytics for the requested date range"),
+});
+
+export const topPerformersResponseSchema = z.object({
+  success: z.literal(true),
+  data: z.array(z.object({
+    employeeId: z.string(),
+    employeeName: z.string(),
+    totalDistanceKm: z.number().optional(),
+    totalDurationSeconds: z.number().optional(),
+    sessionsCount: z.number().optional(),
+  })).describe("Ranked list of top-performing employees"),
+});
+
+export const sessionTrendResponseSchema = z.object({
+  success: z.literal(true),
+  data: z.array(z.object({
+    date: z.string(),
+    sessions: z.number(),
+    distance: z.number(),
+    duration: z.number(),
+  })).describe("Daily session metrics within the requested date range"),
+});
+
+export const leaderboardResponseSchema = z.object({
+  success: z.literal(true),
+  data: z.array(z.object({
+    rank: z.number(),
+    employeeId: z.string(),
+    employeeCode: z.string().nullable(),
+    employeeName: z.string(),
+    distance: z.number(),
+    sessions: z.number(),
+    duration: z.number(),
+    expenses: z.number().optional(),
+  })).describe("Ranked employee leaderboard for the requested metric and date range"),
+});
+
 // ─── Response Data Types ──────────────────────────────────────────────────────
 // Re-exported from @fieldtrack/types — single source of truth shared with the
 // frontend. Add new response shapes to packages/types/src/index.ts instead.

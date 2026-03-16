@@ -8,6 +8,11 @@ import {
   topPerformersQuerySchema,
   sessionTrendQuerySchema,
   leaderboardQuerySchema,
+  orgSummaryResponseSchema,
+  userSummaryResponseSchema,
+  topPerformersResponseSchema,
+  sessionTrendResponseSchema,
+  leaderboardResponseSchema,
 } from "./analytics.schema.js";
 
 /**
@@ -23,6 +28,7 @@ export async function analyticsRoutes(app: FastifyInstance): Promise<void> {
       schema: {
         tags: ["admin"],
         querystring: orgSummaryQuerySchema,
+        response: { 200: orgSummaryResponseSchema.describe("Org-level analytics summary") },
       },
       preValidation: [authenticate, requireRole("ADMIN")],
     },
@@ -35,6 +41,7 @@ export async function analyticsRoutes(app: FastifyInstance): Promise<void> {
       schema: {
         tags: ["admin"],
         querystring: userSummaryQuerySchema,
+        response: { 200: userSummaryResponseSchema.describe("Per-user analytics summary") },
       },
       preValidation: [authenticate, requireRole("ADMIN")],
     },
@@ -47,6 +54,7 @@ export async function analyticsRoutes(app: FastifyInstance): Promise<void> {
       schema: {
         tags: ["admin"],
         querystring: topPerformersQuerySchema,
+        response: { 200: topPerformersResponseSchema.describe("Ranked top performers") },
       },
       preValidation: [authenticate, requireRole("ADMIN")],
     },
@@ -61,6 +69,7 @@ export async function analyticsRoutes(app: FastifyInstance): Promise<void> {
       schema: {
         tags: ["admin"],
         querystring: sessionTrendQuerySchema,
+        response: { 200: sessionTrendResponseSchema.describe("Daily session trend data") },
       },
       preValidation: [authenticate, requireRole("ADMIN")],
     },
@@ -75,6 +84,7 @@ export async function analyticsRoutes(app: FastifyInstance): Promise<void> {
       schema: {
         tags: ["admin"],
         querystring: leaderboardQuerySchema,
+        response: { 200: leaderboardResponseSchema.describe("Employee leaderboard") },
       },
       preValidation: [authenticate, requireRole("ADMIN")],
     },
@@ -91,6 +101,7 @@ export async function analyticsRoutes(app: FastifyInstance): Promise<void> {
       schema: {
         tags: ["analytics"],
         querystring: leaderboardQuerySchema,
+        response: { 200: leaderboardResponseSchema.describe("Employee leaderboard") },
       },
       preValidation: [authenticate],
     },

@@ -48,7 +48,11 @@ export const profileRepository = {
   },
 
   /**
-   * Get employee stats: sessions, distance, duration from attendance_sessions.
+   * Get employee stats: sessions, distance, duration.
+   *
+   * Phase 1 optimization: Reads from employee_daily_metrics (pre-aggregated by
+   * the analytics worker) instead of scanning all attendance_sessions rows.
+   * For an employee with 2 years of history this is O(730 rows) vs O(sessions_count).
    */
   async getEmployeeStats(
     request: FastifyRequest,
@@ -58,8 +62,8 @@ export const profileRepository = {
     totalDistanceKm: number;
     totalDurationSeconds: number;
   }> {
-    const { data, error } = await orgTable(request, "attendance_sessions")
-      .select("total_distance_km, total_duration_seconds")
+    const { data, error } = await orgTable(request, "employee_daily_metrics")
+      .select("sessions, distance_km, duration_seconds")
       .eq("employee_id", employeeId);
 
     if (error) {
@@ -69,13 +73,15 @@ export const profileRepository = {
     const rows = (data ?? []) as Array<Record<string, unknown>>;
     let totalDistanceKm = 0;
     let totalDurationSeconds = 0;
+    let totalSessions = 0;
     for (const row of rows) {
-      totalDistanceKm += (row.total_distance_km as number) ?? 0;
-      totalDurationSeconds += (row.total_duration_seconds as number) ?? 0;
+      totalSessions += (row.sessions as number) ?? 0;
+      totalDistanceKm += (row.distance_km as number) ?? 0;
+      totalDurationSeconds += (row.duration_seconds as number) ?? 0;
     }
 
     return {
-      totalSessions: rows.length,
+      totalSessions,
       totalDistanceKm: Math.round(totalDistanceKm * 100) / 100,
       totalDurationSeconds,
     };
