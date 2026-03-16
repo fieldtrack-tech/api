@@ -14,6 +14,7 @@
 
 import { useEffect, useRef } from "react";
 import type { Map as LeafletMap, Marker as LeafletMarker } from "leaflet";
+import L from "leaflet";
 import type { EmployeeMapMarker } from "@/types";
 
 // ─── Marker icon colours matching status ──────────────────────────────────────
@@ -35,8 +36,6 @@ function makeIcon(status: EmployeeMapMarker["status"]) {
     </svg>
   `.trim();
 
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const L = require("leaflet") as typeof import("leaflet");
   return L.divIcon({
     html: svg,
     className: "",      // prevent Leaflet's default white-box class
@@ -77,10 +76,6 @@ export default function EmployeeMap({ markers, isLoading }: Props) {
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
 
-    // Require inside effect — this code only runs in browser
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const L = require("leaflet") as typeof import("leaflet");
-
     // Leaflet's default icon path breaks with webpack/Next.js — fix it
     // by telling it to use an empty icon. We override icons per-marker anyway.
     // @ts-expect-error _getIconUrl is an internal Leaflet method
@@ -111,9 +106,6 @@ export default function EmployeeMap({ markers, isLoading }: Props) {
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const L = require("leaflet") as typeof import("leaflet");
 
     // Remove old markers
     for (const m of markerLayerRef.current) {

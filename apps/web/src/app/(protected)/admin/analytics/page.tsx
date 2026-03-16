@@ -295,11 +295,6 @@ export default function AnalyticsPage() {
   const { permissions } = useAuth();
   const router = useRouter();
 
-  if (!permissions.viewAnalytics) {
-    router.replace("/sessions");
-    return null;
-  }
-
   // Lazy-init from localStorage — no flicker, no useEffect needed
   const [preset, setPreset] = useState<PresetKey>(() => loadPersistedPreset());
   const [customRange, setCustomRange] = useState<DateRange | null>(
@@ -315,6 +310,16 @@ export default function AnalyticsPage() {
   const { from, to } = activeRange;
   const rangeKey = `${from}::${to}`;
 
+  const summary = useOrgSummary(from, to);
+  const sessionTrend = useSessionTrend(from, to);
+  const topByDistance = useTopPerformers("distance", 10, from, to);
+  const topBySessions = useTopPerformers("sessions", 10, from, to);
+
+  if (!permissions.viewAnalytics) {
+    router.replace("/sessions");
+    return null;
+  }
+
   function handleFilterChange(newPreset: PresetKey, newCustom?: DateRange) {
     setPreset(newPreset);
     persistPreset(newPreset);
@@ -323,11 +328,6 @@ export default function AnalyticsPage() {
       persistCustomRange(newCustom);
     }
   }
-
-  const summary = useOrgSummary(from, to);
-  const sessionTrend = useSessionTrend(from, to);
-  const topByDistance = useTopPerformers("distance", 10, from, to);
-  const topBySessions = useTopPerformers("sessions", 10, from, to);
 
   return (
     <div className="space-y-6">

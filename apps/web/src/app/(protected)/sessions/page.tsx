@@ -24,7 +24,7 @@ export default function SessionsPage() {
   const [activeTab, setActiveTab] = useState<FilterTab>("all");
   const { data, isLoading, error } = useMySessions(page, PAGE_LIMIT);
 
-  const allSessions = data?.data ?? [];
+  const allSessions = useMemo(() => data?.data ?? [], [data]);
   const total = data?.pagination.total ?? 0;
   const hasMore = page * PAGE_LIMIT < total;
 

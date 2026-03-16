@@ -73,11 +73,12 @@ export function useAllOrgExpenses() {
     select: (data) => data.pages.flatMap((p) => p.data),
   });
 
+  const { hasNextPage, isFetchingNextPage, fetchNextPage } = query;
   useEffect(() => {
-    if (query.hasNextPage && !query.isFetchingNextPage) {
-      void query.fetchNextPage();
+    if (hasNextPage && !isFetchingNextPage) {
+      void fetchNextPage();
     }
-  }, [query.hasNextPage, query.isFetchingNextPage, query.fetchNextPage]);
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   return {
     data: query.data ?? [],
