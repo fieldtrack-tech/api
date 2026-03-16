@@ -53,8 +53,14 @@ groups:
 - name: fieldtrack_worker_alerts
   rules:
 
-  # TODO(fieldtrack): add worker throughput alert when a dedicated
-  # distance worker processed jobs counter is exported.
+  - alert: DistanceWorkerJobFailuresHigh
+    expr: increase(distance_jobs_total{status="failed"}[5m]) > 3
+    for: 1m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Distance worker jobs failing at high rate"
+      description: "More than 3 distance recalculation jobs permanently failed in the last 5 minutes. Check Redis connectivity and the distance-engine queue."
 
   - alert: AnalyticsQueueBacklogGrowing
     expr: analytics_queue_depth > 500

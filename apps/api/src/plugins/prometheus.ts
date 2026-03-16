@@ -130,6 +130,20 @@ export const analyticsJobRetriesTotal = new client.Counter({
   registers: [register],
 });
 
+// ─── Distance Worker Metrics ───────────────────────────────────────────────────
+
+/**
+ * Total GPS distance recalculation jobs completed by the distance worker.
+ * Labelled by status ("success" | "failed") so the alert rule can target
+ * permanent failures independently.
+ */
+export const distanceJobsTotal = new client.Counter({
+  name: "distance_jobs_total",
+  help: "Total number of distance recalculation jobs processed by the distance worker",
+  labelNames: ["status"] as const,
+  registers: [register],
+});
+
 const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.addHook("onRequest", async (request) => {
     request.startTime = process.hrtime();

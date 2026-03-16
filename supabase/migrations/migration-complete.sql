@@ -138,6 +138,7 @@ CREATE TABLE IF NOT EXISTS public.expenses (
   submitted_at    TIMESTAMPTZ            NOT NULL DEFAULT now(),
   reviewed_at     TIMESTAMPTZ,
   reviewed_by     UUID                   REFERENCES public.users(id) ON DELETE SET NULL,
+  rejection_comment TEXT,
   created_at      TIMESTAMPTZ            NOT NULL DEFAULT now(),
   updated_at      TIMESTAMPTZ            NOT NULL DEFAULT now()
 );

@@ -6,6 +6,7 @@ import { redisConnectionOptions } from "../config/redis.js";
 import { enqueueDistanceJob } from "./distance.queue.js";
 import { sessionSummaryService } from "../modules/session_summary/session_summary.service.js";
 import { metrics } from "../utils/metrics.js";
+import { distanceJobsTotal } from "../plugins/prometheus.js";
 import { env } from "../config/env.js";
 import { supabaseServiceClient as supabase } from "../config/supabase.js";
 
@@ -62,6 +63,7 @@ export function startDistanceWorker(app: FastifyInstance): Worker | null {
 
           metrics.recordRecalculationTime(executionTimeMs);
           metrics.incrementRecalculations();
+          distanceJobsTotal.inc({ status: "success" });
 
           span.setAttribute("execution_time_ms", executionTimeMs);
           span.setStatus({ code: SpanStatusCode.OK });
@@ -81,6 +83,7 @@ export function startDistanceWorker(app: FastifyInstance): Worker | null {
           }
 
           span.setStatus({ code: SpanStatusCode.ERROR });
+          distanceJobsTotal.inc({ status: "failed" });
 
           app.log.error(
             { jobId: job.id, sessionId, executionTimeMs, error: message },
