@@ -4,6 +4,7 @@ import { authenticate } from "../../middleware/auth.js";
 import { requireRole } from "../../middleware/role-guard.js";
 import { attendanceService } from "../attendance/attendance.service.js";
 import { handleError, paginated } from "../../utils/response.js";
+import { supabaseServiceClient as supabase } from "../../config/supabase.js";
 
 // ─── Query schema ─────────────────────────────────────────────────────────────
 
@@ -63,6 +64,46 @@ export async function adminSessionsRoutes(app: FastifyInstance): Promise<void> {
           .send(paginated(result.data, parsed.page, parsed.limit, result.total));
       } catch (error) {
         handleError(error, request, reply, "Unexpected error fetching admin sessions");
+      }
+    },
+  );
+
+  /**
+   * GET /admin/sessions/:id/locations
+   *
+   * Returns all GPS points recorded during a specific session, ordered by
+   * recorded_at ascending (chronological playback order).
+   * Scoped to the requesting admin's organization — cross-org access is
+   * rejected by the org_id filter applied in the query.
+   *
+   * Auth: ADMIN only.
+   */
+  app.get(
+    "/admin/sessions/:id/locations",
+    {
+      schema: {
+        tags: ["admin"],
+        params: z.object({ id: z.string().uuid() }),
+      },
+      preValidation: [authenticate, requireRole("ADMIN")],
+    },
+    async (request, reply) => {
+      try {
+        const { id: sessionId } = request.params as { id: string };
+        const orgId = request.organizationId;
+
+        const { data, error } = await supabase
+          .from("gps_locations")
+          .select("id, latitude, longitude, accuracy, recorded_at, sequence_number")
+          .eq("session_id", sessionId)
+          .eq("organization_id", orgId)
+          .order("recorded_at", { ascending: true });
+
+        if (error) throw new Error(error.message);
+
+        reply.status(200).send({ success: true, data: data ?? [] });
+      } catch (error) {
+        handleError(error, request, reply, "Failed to fetch session locations");
       }
     },
   );
