@@ -29,11 +29,16 @@ MAX_HEALTH_ATTEMPTS=20
 HEALTH_INTERVAL=3
 
 # ---------------------------------------------------------------------------
-# Pre-flight: require API_DOMAIN to be set in the calling environment.
-# Without it we cannot render a valid nginx config.
+# Pre-flight: resolve API_DOMAIN.
+# Prefer the calling environment (CI sets it explicitly); fall back to the
+# app .env file so direct VPS invocations work without exporting the var.
 # ---------------------------------------------------------------------------
+if [ -z "${API_DOMAIN:-}" ] && [ -f "$ENV_FILE" ]; then
+    API_DOMAIN=$(grep -E '^API_DOMAIN=' "$ENV_FILE" | head -1 | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+fi
+
 if [ -z "${API_DOMAIN:-}" ]; then
-    echo "ERROR: API_DOMAIN is not set. Deployment aborted."
+    echo "ERROR: API_DOMAIN is not set and could not be read from $ENV_FILE. Deployment aborted."
     exit 1
 fi
 
