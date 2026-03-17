@@ -197,14 +197,13 @@ if [ -f "$MONITORING_HASH_FILE" ] && [ "$(cat "$MONITORING_HASH_FILE")" = "$MONI
     echo "[monitoring] Configuration unchanged — skipping restart."
 else
     echo "[monitoring] Configuration changed — restarting monitoring stack..."
-    docker compose \
-        -f "$REPO_DIR/infra/docker-compose.monitoring.yml" \
-        --env-file "$REPO_DIR/infra/.env.monitoring" \
-        pull --quiet
-    docker compose \
-        -f "$REPO_DIR/infra/docker-compose.monitoring.yml" \
-        --env-file "$REPO_DIR/infra/.env.monitoring" \
-        up -d --remove-orphans
+    # cd into infra/ so relative volume paths in docker-compose.monitoring.yml
+    # (./loki/, ./prometheus/, ./promtail/, ./grafana/) resolve to the correct
+    # infra subdirectories regardless of where this script was invoked from.
+    cd "$REPO_DIR/infra"
+    docker compose --env-file .env.monitoring -f docker-compose.monitoring.yml pull --quiet
+    docker compose --env-file .env.monitoring -f docker-compose.monitoring.yml up -d --remove-orphans
+    cd "$REPO_DIR"
     echo "$MONITORING_HASH" > "$MONITORING_HASH_FILE"
     echo "[monitoring] Monitoring stack restarted."
 fi
