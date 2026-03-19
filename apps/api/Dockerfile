@@ -1,7 +1,8 @@
 # Build context: monorepo root (docker build -f apps/api/Dockerfile .)
 # ---- Stage 1: Build ----
-# Pinned to specific version to prevent supply chain attacks
-FROM node:24.2.0-alpine AS builder
+# Pinned to specific version to prevent supply chain attacks.
+# Debian slim avoids Alpine's busybox/apk vulnerability churn in Trivy.
+FROM node:24.2.0-bookworm-slim AS builder
 
 WORKDIR /workspace
 
@@ -24,8 +25,9 @@ COPY apps/api/src ./src
 RUN npm run build
 
 # ---- Stage 2: Production ----
-# Pinned to specific version to prevent supply chain attacks
-FROM node:24.2.0-alpine AS production
+# Pinned to specific version to prevent supply chain attacks.
+# Keep runtime on the same distro family as the builder to avoid ABI drift.
+FROM node:24.2.0-bookworm-slim AS production
 
 WORKDIR /app
 
@@ -40,8 +42,12 @@ RUN npm ci --omit=dev --workspace apps/api --workspace packages/types --include-
 COPY --from=builder /workspace/apps/api/dist ./apps/api/dist
 COPY --from=builder /workspace/packages/types/dist ./packages/types/dist
 
-# Phase 11: curl required for Docker HEALTHCHECK
-RUN apk add --no-cache curl
+# Phase 11: curl required for Docker HEALTHCHECK.
+# Install only the minimal runtime package and clean apt metadata to keep the
+# production image small and reduce residual scanner noise.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends curl \
+  && rm -rf /var/lib/apt/lists/*
 
 EXPOSE 3000
 
