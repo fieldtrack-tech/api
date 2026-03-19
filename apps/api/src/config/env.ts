@@ -629,12 +629,3 @@ export function logStartupConfig(logger: MinimalLogger): void {
     }
   }
 }
-
-// Production safety check: ALLOWED_ORIGINS must be set
-// An empty ALLOWED_ORIGINS causes the CORS plugin to fall back to `origin: true`,
-// which allows all origins and opens the API to cross-site credential abuse.
-if (env.NODE_ENV === "production" && env.ALLOWED_ORIGINS.length === 0) {
-  throw new Error(
-    "ALLOWED_ORIGINS must be set in production to prevent cross-origin credential abuse"
-  );
-}
