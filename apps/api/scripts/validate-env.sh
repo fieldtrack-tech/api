@@ -189,10 +189,11 @@ fi
 # =============================================================================
 header "Contract boundary check"
 
-BACKEND_HOSTNAME="$(get_val "API_HOSTNAME" "$API_ENV_FILE")"
-if [[ -n "$BACKEND_HOSTNAME" ]]; then
-    warn "API_HOSTNAME found in apps/api/.env"
-    warn "  It is derived at deploy-time by load-env.sh — remove it to avoid drift"
+# STRICT: API_HOSTNAME must NOT exist in apps/api/.env
+if grep -q "^API_HOSTNAME=" "$API_ENV_FILE" 2>/dev/null; then
+    fail "API_HOSTNAME found in apps/api/.env — this violates the env contract"
+    fail "  API_HOSTNAME is derived at deploy-time from API_BASE_URL"
+    fail "  Remove API_HOSTNAME from apps/api/.env immediately"
 else
     pass "API_HOSTNAME absent from apps/api/.env (correct — derived from API_BASE_URL)"
 fi
