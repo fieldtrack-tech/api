@@ -327,7 +327,12 @@ jobs:
             nginx:stable-alpine nginx -t 2>&1
           echo "✓ Nginx config syntax OK"
 
-      - name: Validate docker-compose (monitoring stack)
+      - name: Log nginx config fingerprint
+        if: steps.scope.outputs.skip != 'true'
+        run: |
+          HASH=$(sha256sum /tmp/nginx-test.conf | cut -d' ' -f1)
+          echo "nginx_config_hash=${HASH}"
+          echo "nginx_config_hash=${HASH}" >> "$GITHUB_STEP_SUMMARY"
         if: steps.scope.outputs.skip != 'true'
         run: |
           docker compose \
@@ -427,6 +432,14 @@ jobs:
       # Two-phase approach (required for --network none):
       #   Phase A — Download vuln DB while network is available, cache to /tmp/trivy-cache
       #   Phase B — Scan with --network none + --skip-db-update (air-gapped)
+      - name: Cache Trivy DB
+        uses: actions/cache@v4
+        with:
+          path: /tmp/trivy-cache
+          key: trivy-db-${{ runner.os }}-v1
+          restore-keys: |
+            trivy-db-${{ runner.os }}-
+
       - name: Pull Trivy vulnerability database
         run: |
           docker run --rm \
