@@ -8,8 +8,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Load and validate environment.
 # Sets: DEPLOY_ROOT, ENV_FILE, API_HOSTNAME.
 # Exports all variables from apps/api/.env into this process.
-# Temporarily disable trace so .env values are not echoed to logs.
-{ set +x; source "$SCRIPT_DIR/load-env.sh"; set -x; }
+# Disable trace to prevent secrets from leaking into logs.
+set +x
+source "$SCRIPT_DIR/load-env.sh"
+set -x
 
 DEPLOY_HISTORY="$DEPLOY_ROOT/apps/api/.deploy_history"
 
@@ -77,7 +79,29 @@ echo ""
 echo "Starting rollback to: $PREVIOUS_SHA"
 echo ""
 
-"$SCRIPT_DIR/deploy-bluegreen.sh" "$PREVIOUS_SHA"
+# Set guard to prevent infinite rollback loops
+export FIELDTRACK_ROLLBACK_IN_PROGRESS=1
+
+# Attempt rollback deploy
+if ! "$SCRIPT_DIR/deploy-bluegreen.sh" "$PREVIOUS_SHA"; then
+    echo ""
+    echo "========================================="
+    echo "❌ CRITICAL: ROLLBACK FAILED"
+    echo "========================================="
+    echo "Both deployment and rollback have failed."
+    echo "Manual intervention required immediately."
+    echo ""
+    echo "Current state: UNDEFINED"
+    echo "Target SHA:    $PREVIOUS_SHA"
+    echo ""
+    echo "Action required:"
+    echo "  1. Check container status: docker ps -a"
+    echo "  2. Check nginx config: sudo nginx -t"
+    echo "  3. Review logs: docker logs backend-blue backend-green"
+    echo "  4. Manually restore last known good state"
+    echo "========================================="
+    exit 2
+fi
 
 echo ""
 echo "========================================="

@@ -105,6 +105,7 @@ desktop.ini
 *~
 *.sublime-project
 *.sublime-workspace
+.kiro/
 
 # ----------------
 # Temporary Files

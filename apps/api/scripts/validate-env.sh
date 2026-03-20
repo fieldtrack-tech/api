@@ -3,6 +3,7 @@
 # validate-env.sh — FieldTrack 2.0 environment contract validator
 #
 # Run before any deployment to catch configuration drift early.
+# SELF-SUFFICIENT: sources load-env.sh internally, does NOT depend on caller env.
 #
 # Usage:
 #   bash apps/api/scripts/validate-env.sh
@@ -68,6 +69,14 @@ get_val() {
 
 DERIVED_HOSTNAME=""
 
+# ── Load environment (self-sufficient) ────────────────────────────────────────
+# Source load-env.sh to get API_HOSTNAME derived using the SAME Node logic.
+# This ensures validate-env.sh uses identical parsing to deploy scripts.
+# Disable trace to prevent secrets from leaking into logs.
+set +x 2>/dev/null || true
+source "$SCRIPT_DIR/load-env.sh"
+set -x 2>/dev/null || true
+
 # ── Banner ─────────────────────────────────────────────────────────────────────
 printf "\n${BOLD}╔══════════════════════════════════════════════════════════╗${NC}\n"
 printf "${BOLD}║   FieldTrack 2.0 — Environment Contract Validator        ║${NC}\n"
@@ -75,6 +84,21 @@ printf "${BOLD}╚════════════════════�
 printf "  API env:           %s\n" "$API_ENV_FILE"
 printf "  Monitoring env:    %s\n" "$MONITORING_ENV_FILE"
 printf "  Check monitoring:  %s\n" "$CHECK_MONITORING"
+
+# =============================================================================
+# SECTION 0: Forbidden variable check (repository-wide)
+# =============================================================================
+header "Forbidden variable check (API_DOMAIN)"
+
+# Hard error: API_DOMAIN must not appear ANYWHERE in the repository.
+# Check all env files, scripts, and config files.
+if grep -r "API_DOMAIN" "$REPO_ROOT/apps/api/.env" "$REPO_ROOT/infra/.env.monitoring" 2>/dev/null | grep -v "^#"; then
+    fail "API_DOMAIN found in environment files — this variable has been REMOVED"
+    fail "  Replace with: API_BASE_URL=https://your-domain.com (in apps/api/.env)"
+    fail "                API_HOSTNAME=your-domain.com (in infra/.env.monitoring)"
+else
+    pass "API_DOMAIN not found in environment files (correct)"
+fi
 
 # =============================================================================
 # SECTION 1: Backend .env
@@ -88,13 +112,6 @@ if [[ ! -f "$API_ENV_FILE" ]]; then
     exit 1
 fi
 pass ".env file exists"
-
-# Hard error: API_DOMAIN must not appear anywhere in apps/api/.env
-LEGACY_DOMAIN="$(get_val "API_DOMAIN" "$API_ENV_FILE")"
-if [[ -n "$LEGACY_DOMAIN" ]]; then
-    fail "API_DOMAIN found in apps/api/.env — this variable has been removed"
-    fail "  Replace with: API_BASE_URL=https://$LEGACY_DOMAIN"
-fi
 
 # Required backend variables
 REQUIRED_API_VARS=(
@@ -119,7 +136,7 @@ done
 # =============================================================================
 header "API_BASE_URL validation"
 
-API_BASE_URL="$(get_val "API_BASE_URL" "$API_ENV_FILE")"
+# API_BASE_URL is already loaded by load-env.sh (sourced above)
 if [[ -z "$API_BASE_URL" ]]; then
     fail "API_BASE_URL is empty — skipping format checks"
 else
@@ -131,12 +148,21 @@ else
         fail "API_BASE_URL must start with https:// or http://"
     fi
 
-    # Derive API_HOSTNAME — same logic as load-env.sh
-    DERIVED_HOSTNAME="${API_BASE_URL#https://}"
-    DERIVED_HOSTNAME="${DERIVED_HOSTNAME#http://}"
-    DERIVED_HOSTNAME="${DERIVED_HOSTNAME%%/*}"
+    # Derive API_HOSTNAME using SAME Node logic as load-env.sh for consistency
+    DERIVED_HOSTNAME=$(node -e "
+try {
+  const url = new URL(process.argv[1]);
+  console.log(url.host);
+} catch (err) {
+  console.error('ERROR: Invalid API_BASE_URL format');
+  process.exit(1);
+}
+" "$API_BASE_URL" 2>&1)
 
-    if [[ -z "$DERIVED_HOSTNAME" ]]; then
+    if [ $? -ne 0 ]; then
+        fail "Cannot derive API_HOSTNAME from API_BASE_URL='$API_BASE_URL'"
+        fail "  Node.js URL parser rejected this value"
+    elif [[ -z "$DERIVED_HOSTNAME" ]]; then
         fail "Cannot derive API_HOSTNAME from API_BASE_URL='$API_BASE_URL'"
     elif [[ "$DERIVED_HOSTNAME" =~ [[:space:]/@?#] ]]; then
         fail "Derived API_HOSTNAME contains invalid characters: '$DERIVED_HOSTNAME'"
@@ -145,6 +171,16 @@ else
         warn "API_HOSTNAME '$DERIVED_HOSTNAME' has no dot — OK for localhost only"
     else
         pass "API_HOSTNAME derived: $DERIVED_HOSTNAME"
+    fi
+
+    # Compare with API_HOSTNAME from load-env.sh (already exported)
+    if [[ -n "$API_HOSTNAME" && "$API_HOSTNAME" != "$DERIVED_HOSTNAME" ]]; then
+        fail "API_HOSTNAME MISMATCH between load-env.sh and validate-env.sh"
+        fail "  load-env.sh:     $API_HOSTNAME"
+        fail "  validate-env.sh: $DERIVED_HOSTNAME"
+        fail "  This indicates a parsing inconsistency — both must use identical logic"
+    else
+        pass "API_HOSTNAME consistent: $DERIVED_HOSTNAME"
     fi
 fi
 
@@ -175,12 +211,6 @@ if [[ ! -f "$MONITORING_ENV_FILE" ]]; then
     fi
 else
     pass ".env.monitoring exists"
-
-    # Hard error: API_DOMAIN must not appear in .env.monitoring either
-    LEGACY_MON="$(get_val "API_DOMAIN" "$MONITORING_ENV_FILE")"
-    if [[ -n "$LEGACY_MON" ]]; then
-        fail "API_DOMAIN found in infra/.env.monitoring — rename it to API_HOSTNAME=$LEGACY_MON"
-    fi
 
     # Required monitoring variables
     REQUIRED_MON_VARS=(

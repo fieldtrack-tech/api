@@ -23,8 +23,10 @@ REPO_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 # Load and validate environment.
 # Sets: DEPLOY_ROOT, ENV_FILE, API_HOSTNAME.
 # Exports all variables from apps/api/.env into this process.
-# Temporarily disable trace so .env values are not echoed to logs.
-{ set +x; source "$SCRIPT_DIR/load-env.sh"; set -x; }
+# Disable trace to prevent secrets from leaking into logs.
+set +x
+source "$SCRIPT_DIR/load-env.sh"
+set -x
 
 NGINX_CONF="/etc/nginx/sites-enabled/fieldtrack.conf"
 NGINX_TEMPLATE="$REPO_DIR/infra/nginx/fieldtrack.conf"
@@ -43,11 +45,14 @@ echo "✓ API_HOSTNAME: $API_HOSTNAME"
 # Pre-flight: full env contract validation.
 # Covers required vars, API_BASE_URL format, API_HOSTNAME derivation, and
 # METRICS_SCRAPE_TOKEN alignment between apps/api/.env and infra/.env.monitoring.
-# Temporarily disable trace so token values are not echoed to the log.
+# validate-env.sh is self-sufficient (sources load-env.sh internally).
+# Disable trace to prevent token values from leaking into logs.
 # validate-env.sh exits non-zero on any failure — set -e aborts the deploy here.
 # ---------------------------------------------------------------------------
 echo "--- Pre-flight: env contract validation ---"
-{ set +x; "$SCRIPT_DIR/validate-env.sh" --check-monitoring; set -x; }
+set +x
+"$SCRIPT_DIR/validate-env.sh" --check-monitoring
+set -x
 
 echo "========================================="
 echo "FieldTrack Blue-Green Deployment Started"
@@ -176,6 +181,13 @@ echo "$INACTIVE" > "$ACTIVE_SLOT_FILE"
 
 echo "[7/8] Post-deploy public health check..."
 
+# Dual validation strategy:
+#   1. Internal check (127.0.0.1:$INACTIVE_PORT/ready) — already passed in step 4
+#      This is the source of truth: container is healthy and serving traffic.
+#   2. External check (https://$API_HOSTNAME/health) — validates edge routing
+#      Tests TLS, DNS, nginx upstream, and firewall. Failure here triggers rollback
+#      because the container is unreachable from the internet despite being healthy.
+#
 # Brief settle time — nginx needs a moment to apply the new upstream config
 # before forwarding connections cleanly.
 sleep 3
@@ -212,7 +224,17 @@ if [ "$_PUBLIC_CHECK_PASSED" != "true" ]; then
         echo ""
         echo "Triggering automatic rollback to previous stable image..."
         export FIELDTRACK_ROLLBACK_IN_PROGRESS=1
-        "$SCRIPT_DIR/rollback.sh" --auto || true
+        if ! "$SCRIPT_DIR/rollback.sh" --auto; then
+            echo ""
+            echo "========================================="
+            echo "❌ CRITICAL: ROLLBACK FAILED"
+            echo "========================================="
+            echo "Both deployment and automatic rollback have failed."
+            echo "System state: UNDEFINED"
+            echo "Manual intervention required immediately."
+            echo "========================================="
+            exit 2
+        fi
     else
         echo "Already in rollback sequence — stopping without recursive rollback."
     fi

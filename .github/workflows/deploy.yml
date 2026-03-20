@@ -475,6 +475,23 @@ jobs:
           fi
           echo "✓ CORS_ORIGIN is set"
 
+      - name: Validate environment contract before deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: ${{ secrets.DO_USER }}
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            export DEPLOY_ROOT="/home/ashish/FieldTrack-2.0"
+            cd "$DEPLOY_ROOT"
+            git fetch origin
+            git reset --hard origin/master
+            chmod +x apps/api/scripts/validate-env.sh
+            echo "=== Pre-deploy environment validation ==="
+            ./apps/api/scripts/validate-env.sh --check-monitoring
+            echo "✓ Environment contract validated"
+
       - name: Blue-Green deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -486,11 +503,8 @@ jobs:
             T0=$(date +%s)
             export DEPLOY_ROOT="/home/ashish/FieldTrack-2.0"
             cd "$DEPLOY_ROOT"
-            git fetch origin
-            git reset --hard origin/master
-            chmod +x apps/api/scripts/validate-env.sh apps/api/scripts/deploy-bluegreen.sh
-            # Pre-flight: verify env contract before touching any containers
-            ./apps/api/scripts/validate-env.sh --check-monitoring
+            chmod +x apps/api/scripts/deploy-bluegreen.sh
+            # Environment already validated in previous step
             ./apps/api/scripts/deploy-bluegreen.sh "${{ needs.build-scan-push.outputs.sha_short }}"
             echo "✓ Deploy completed in $(($(date +%s) - T0))s"
 

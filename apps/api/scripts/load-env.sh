@@ -15,6 +15,9 @@
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
+# Disable trace to prevent secrets from leaking into logs
+set +x 2>/dev/null || true
+
 # Derive repo root from this script's own location so the loader works
 # regardless of the current working directory when it is sourced.
 _LES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -62,12 +65,28 @@ echo "✓ API_BASE_URL is set"
 echo "✓ CORS_ORIGIN is set"
 
 # ── Derive API_HOSTNAME from API_BASE_URL ────────────────────────────────────
-# Strips scheme (https:// / http://) and any trailing path/query fragment so
-# nginx server_name, Prometheus targets, and Grafana root URL all get a plain
-# bare hostname.
-API_HOSTNAME="${API_BASE_URL#https://}"
-API_HOSTNAME="${API_HOSTNAME#http://}"
-API_HOSTNAME="${API_HOSTNAME%%/*}"
+# Use Node.js URL parser for deterministic hostname extraction — matches backend
+# behavior exactly (env.ts uses new URL().host). This prevents sed/bash parsing
+# drift that caused production mismatches.
+API_HOSTNAME=$(node -e "
+try {
+  const url = new URL(process.argv[1]);
+  console.log(url.host);
+} catch (err) {
+  console.error('ERROR: Invalid API_BASE_URL format');
+  process.exit(1);
+}
+" "$API_BASE_URL" 2>&1)
+
+# Capture Node exit code before any other commands
+_NODE_EXIT=$?
+
+if [ $_NODE_EXIT -ne 0 ]; then
+    echo "❌ Failed to parse API_BASE_URL='$API_BASE_URL'"
+    echo "   Node.js URL parser rejected this value."
+    echo "   Expected format: https://api.example.com or http://localhost:3000"
+    exit 1
+fi
 
 # Validate: result must be a non-empty bare hostname (or host:port).
 # Reject if it contains whitespace, path separators, credential markers (@),
