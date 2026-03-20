@@ -159,10 +159,10 @@ NGINX_BACKUP="/etc/nginx/fieldtrack.conf.bak.$(date +%s)"
 NGINX_TMP="$(mktemp /tmp/fieldtrack-nginx.XXXXXX.conf)"
 
 # Generate a fresh nginx config from the repo template.
-# Only __BACKEND_PORT__ and __API_DOMAIN__ are substituted — nothing else.
+# Only __BACKEND_PORT__ and __API_HOSTNAME__ are substituted — nothing else.
 sed \
     -e "s|__BACKEND_PORT__|$INACTIVE_PORT|g" \
-    -e "s|__API_DOMAIN__|$API_HOSTNAME|g" \
+    -e "s|__API_HOSTNAME__|$API_HOSTNAME|g" \
     "$NGINX_TEMPLATE" > "$NGINX_TMP"
 
 # Save the current live config so we can restore it if validation fails.

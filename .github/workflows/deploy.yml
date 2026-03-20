@@ -488,7 +488,9 @@ jobs:
             cd "$DEPLOY_ROOT"
             git fetch origin
             git reset --hard origin/master
-            chmod +x apps/api/scripts/deploy-bluegreen.sh
+            chmod +x apps/api/scripts/validate-env.sh apps/api/scripts/deploy-bluegreen.sh
+            # Pre-flight: verify env contract before touching any containers
+            ./apps/api/scripts/validate-env.sh --check-monitoring
             ./apps/api/scripts/deploy-bluegreen.sh "${{ needs.build-scan-push.outputs.sha_short }}"
             echo "✓ Deploy completed in $(($(date +%s) - T0))s"
 
@@ -541,7 +543,7 @@ jobs:
             NGINX_TMP=$(mktemp /tmp/fieldtrack-nginx.XXXXXX.conf)
             sed \
               -e "s|__BACKEND_PORT__|$BACKEND_PORT|g" \
-              -e "s|__API_DOMAIN__|$API_HOSTNAME|g" \
+              -e "s|__API_HOSTNAME__|$API_HOSTNAME|g" \
               -e "s|__FRONTEND_DOMAIN__|$FRONTEND_DOMAIN|g" \
               "$INFRA_DIR/nginx/fieldtrack.conf" > "$NGINX_TMP"
             sudo cp "$NGINX_TMP" "$NGINX_LIVE"
