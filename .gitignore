@@ -43,6 +43,8 @@ packages/*/node_modules/
 .env.production.local
 !.env.example
 !.env.monitoring.example
+!.env.ci
+!.env.monitoring.ci
 
 # ----------------
 # Build Output

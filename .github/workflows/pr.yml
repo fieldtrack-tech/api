@@ -616,6 +616,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+
       - name: Setup CI environment files
         run: |
           echo "=== Setting up CI environment ==="
@@ -676,6 +681,7 @@ jobs:
           cd /tmp/vps/FieldTrack-2.0
           chmod +x apps/api/scripts/deploy-bluegreen.sh
           chmod +x apps/api/scripts/load-env.sh
+          chmod +x apps/api/scripts/validate-env.sh
           
           # Tag the built image to match what deploy script expects
           docker tag fieldtrack-backend:ci-deploy ghcr.io/fieldtrack-tech/fieldtrack-backend:ci-test
