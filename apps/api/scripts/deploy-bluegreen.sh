@@ -141,7 +141,15 @@ sleep 5
 
 ATTEMPT=0
 
-until curl --max-time 2 -fs "http://127.0.0.1:$INACTIVE_PORT/ready" >/dev/null 2>&1; do
+# CI MODE: Use /health (no dependencies)
+# Production: Use /ready (validates Redis, Supabase, BullMQ)
+if [ "$CI_MODE" = "true" ]; then
+    HEALTH_ENDPOINT="/health"
+else
+    HEALTH_ENDPOINT="/ready"
+fi
+
+until curl --max-time 2 -fs "http://127.0.0.1:$INACTIVE_PORT$HEALTH_ENDPOINT" >/dev/null 2>&1; do
     ATTEMPT=$((ATTEMPT+1))
 
     # Check if container crashed during health check
@@ -157,6 +165,7 @@ until curl --max-time 2 -fs "http://127.0.0.1:$INACTIVE_PORT/ready" >/dev/null 2
 
     if [ "$ATTEMPT" -ge "$MAX_HEALTH_ATTEMPTS" ]; then
         echo "Readiness check failed after $MAX_HEALTH_ATTEMPTS attempts."
+        echo "Endpoint: http://127.0.0.1:$INACTIVE_PORT$HEALTH_ENDPOINT"
 
         echo "===== Container logs ($INACTIVE_NAME) ====="
         docker logs "$INACTIVE_NAME" --tail 100 || true
@@ -228,7 +237,7 @@ if [ "$CI_MODE" = "true" ]; then
     echo "✓ Internal health check already passed in step 4"
 else
     # Dual validation strategy:
-    #   1. Internal check (127.0.0.1:$INACTIVE_PORT/ready) — already passed in step 4
+    #   1. Internal check (127.0.0.1:$INACTIVE_PORT/health or /ready) — already passed in step 4
     #      This is the source of truth: container is healthy and serving traffic.
     #   2. External check (https://$API_HOSTNAME/health) — validates edge routing
     #      Tests TLS, DNS, nginx upstream, and firewall. Failure here triggers rollback
