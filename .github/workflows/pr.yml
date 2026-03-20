@@ -463,10 +463,12 @@ jobs:
               --network none \
               -v /var/run/docker.sock:/var/run/docker.sock \
               -v /tmp/trivy-cache:/root/.cache \
+              -v "$(pwd)/.trivyignore:/tmp/.trivyignore:ro" \
               aquasec/trivy@sha256:91494b87ddc64f62860d52997532643956c24eeee0d0dda317d563c28c8581bc image \
                 --skip-db-update \
                 --severity HIGH,CRITICAL \
                 --exit-code 1 \
+                --ignorefile /tmp/.trivyignore \
                 "$IMAGE_NAME"; then
               SCAN_PASSED=true
               break
