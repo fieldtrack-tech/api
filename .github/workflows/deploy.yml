@@ -432,13 +432,7 @@ jobs:
         env:
           IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
         run: |
-          SBOM_COUNT=$(python3 -c "
-import json, sys
-try:
-    d = json.load(open('sbom.json'))
-    print(len(d.get('components', [])))
-except: print('n/a')
-" 2>/dev/null || echo 'n/a')
+          SBOM_COUNT=$(python3 -c "import json; d=json.load(open('sbom.json')); print(len(d.get('components', [])))" 2>/dev/null || echo 'n/a')
           {
             echo "## Build · Scan · Push"
             echo "| Field | Value |"
