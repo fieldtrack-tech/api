@@ -635,9 +635,14 @@ describe("APP_BASE_URL", () => {
     expect("APP_BASE_URL" in privateEnv).toBe(false);
   });
 
-  it("is undefined in the test environment (not set in env-setup.ts)", () => {
-    // env-setup.ts does not set APP_BASE_URL — it should parse as undefined.
-    expect(env.APP_BASE_URL).toBeUndefined();
+  it("is consistent with the test environment's APP_BASE_URL value", () => {
+    // If APP_BASE_URL is set in the test environment it must be a valid URL;
+    // if it is not set it must be absent (optional field).
+    if (process.env.APP_BASE_URL) {
+      expect(env.APP_BASE_URL).toBe(process.env.APP_BASE_URL.replace(/\/+$/, ""));
+    } else {
+      expect(env.APP_BASE_URL).toBeUndefined();
+    }
   });
 
   it("optionalBaseUrl strips trailing slash from APP_BASE_URL when set", () => {

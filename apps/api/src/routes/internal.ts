@@ -3,7 +3,6 @@ import { metrics } from "../utils/metrics.js";
 import { getQueueDepth } from "../workers/distance.queue.js";
 import { authenticate } from "../middleware/auth.js";
 import { requireRole } from "../middleware/role-guard.js";
-import { supabaseServiceClient as supabase } from "../config/supabase.js";
 
 export async function internalRoutes(app: FastifyInstance): Promise<void> {
   /**
