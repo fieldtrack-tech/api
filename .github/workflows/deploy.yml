@@ -586,15 +586,17 @@ jobs:
           BASE_URL="${FT_API_BASE_URL%/}"
           echo "Polling ${BASE_URL}/health ..."
           for i in $(seq 1 30); do
-            STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "${BASE_URL}/health" || echo "000")
-            if [ "$STATUS" = "200" ]; then
-              echo "✓ /health returned 200 (attempt $i)"
+            BODY=$(curl -sf "${BASE_URL}/health" 2>/dev/null || echo "")
+            if echo "$BODY" | grep -q '"status":"ok"'; then
+              echo "✓ /health returned 200 with status:ok (attempt $i)"
               exit 0
             fi
+            STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "${BASE_URL}/health" || echo "000")
             echo "  attempt $i: HTTP $STATUS — waiting 2s..."
             sleep 2
           done
-          echo "✗ /health did not return 200 after 60 s"
+          echo "✗ /health did not return status:ok after 60 s"
+          echo "  Last response body: $(curl -sS "${BASE_URL}/health" 2>&1 | head -c 500)"
           exit 1
 
       - name: Wait for /ready endpoint (30 s timeout)
@@ -604,15 +606,17 @@ jobs:
           BASE_URL="${FT_API_BASE_URL%/}"
           echo "Polling ${BASE_URL}/ready ..."
           for i in $(seq 1 15); do
-            STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "${BASE_URL}/ready" || echo "000")
-            if [ "$STATUS" = "200" ]; then
-              echo "✓ /ready returned 200 (attempt $i)"
+            BODY=$(curl -sf "${BASE_URL}/ready" 2>/dev/null || echo "")
+            if echo "$BODY" | grep -q '"status":"ready"'; then
+              echo "✓ /ready returned 200 with status:ready (attempt $i)"
               exit 0
             fi
+            STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "${BASE_URL}/ready" || echo "000")
             echo "  attempt $i: HTTP $STATUS — waiting 2s..."
             sleep 2
           done
-          echo "✗ /ready did not return 200 after 30 s"
+          echo "✗ /ready did not return status:ready after 30 s"
+          echo "  Last response body: $(curl -sS "${BASE_URL}/ready" 2>&1 | head -c 500)"
           exit 1
 
       - name: Run smoke tests
