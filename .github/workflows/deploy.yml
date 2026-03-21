@@ -590,16 +590,21 @@ jobs:
             echo "=== Checking /health via VPS ==="
             API_HOSTNAME="${API_HOSTNAME:-api.getfieldtrack.app}"
             for i in $(seq 1 30); do
-              BODY=$(curl -sS \
+              echo "---- Attempt $i ----"
+              STATUS=$(curl -sS \
                 --resolve "${API_HOSTNAME}:443:127.0.0.1" \
+                -o /tmp/resp.txt \
+                -w "%{http_code}" \
                 https://${API_HOSTNAME}/health \
-                --insecure 2>/dev/null || echo "")
-              if echo "$BODY" | grep -q '"status":"ok"'; then
+                --insecure || echo "000")
+              BODY=$(cat /tmp/resp.txt 2>/dev/null || echo "")
+              echo "HTTP: $STATUS"
+              echo "BODY: $BODY"
+              if [ "$STATUS" = "200" ] && echo "$BODY" | grep -q '"status":"ok"'; then
                 echo "✓ /health OK (attempt $i)"
                 exit 0
               fi
-              echo "Attempt $i failed"
-              [ $i -lt 30 ] && sleep 2
+              sleep 2
             done
             echo "❌ /health failed"
             exit 1
@@ -615,16 +620,21 @@ jobs:
             echo "=== Checking /ready via VPS ==="
             API_HOSTNAME="${API_HOSTNAME:-api.getfieldtrack.app}"
             for i in $(seq 1 15); do
-              BODY=$(curl -sS \
+              echo "---- Attempt $i ----"
+              STATUS=$(curl -sS \
                 --resolve "${API_HOSTNAME}:443:127.0.0.1" \
+                -o /tmp/resp.txt \
+                -w "%{http_code}" \
                 https://${API_HOSTNAME}/ready \
-                --insecure 2>/dev/null || echo "")
-              if echo "$BODY" | grep -q '"status":"ready"'; then
+                --insecure || echo "000")
+              BODY=$(cat /tmp/resp.txt 2>/dev/null || echo "")
+              echo "HTTP: $STATUS"
+              echo "BODY: $BODY"
+              if [ "$STATUS" = "200" ] && echo "$BODY" | grep -q '"status":"ready"'; then
                 echo "✓ /ready OK (attempt $i)"
                 exit 0
               fi
-              echo "Attempt $i failed"
-              [ $i -lt 15 ] && sleep 2
+              sleep 2
             done
             echo "❌ /ready failed"
             exit 1
