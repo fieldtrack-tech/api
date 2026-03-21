@@ -7,9 +7,6 @@ on:
       - synchronize
       - reopened
       - ready_for_review
-  check_suite:
-    types:
-      - completed
 
 permissions:
   contents: write
@@ -25,6 +22,8 @@ jobs:
     if: github.event.pull_request.merged == false
 
     steps:
+      - uses: actions/checkout@v4
+
       - name: Validate PR scope
         if: >
           github.event.pull_request.base.ref != 'master' ||
@@ -35,25 +34,34 @@ jobs:
         if: github.event.pull_request.draft == true
         run: exit 0
 
-      - name: Wait for checks
+      - name: Wait for checks to complete
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           PR=${{ github.event.pull_request.number }}
 
-          for i in {1..10}; do
-            FAILING=$(gh pr view "$PR" --json statusCheckRollup -q '
-              [.statusCheckRollup[] | select(.conclusion != "SUCCESS")] | length
+          for i in {1..20}; do
+            STATUS=$(gh pr view "$PR" --json statusCheckRollup -q '
+              [.statusCheckRollup[] | select(.status != "COMPLETED")] | length
             ')
 
-            if [ "$FAILING" = "0" ]; then
-              echo "All checks passed"
+            if [ "$STATUS" = "0" ]; then
+              echo "All checks completed"
               break
             fi
 
             echo "Waiting for checks..."
-            sleep 30
+            sleep 15
           done
+
+          FAILING=$(gh pr view "$PR" --json statusCheckRollup -q '
+            [.statusCheckRollup[] | select(.conclusion != "SUCCESS")] | length
+          ')
+
+          if [ "$FAILING" != "0" ]; then
+            echo "Some checks failed"
+            exit 1
+          fi
 
       - name: Merge PR
         env:
