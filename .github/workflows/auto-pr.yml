@@ -1,0 +1,134 @@
+name: Auto Draft PR (beta → master)
+
+on:
+  push:
+    branches:
+      - beta
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: auto-pr-beta
+  cancel-in-progress: false
+
+jobs:
+  auto-pr:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch branches
+        run: git fetch origin master beta
+
+      - name: Check existing PR
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR=$(gh pr list \
+            --base master \
+            --head beta \
+            --state open \
+            --json number \
+            --jq '.[0].number')
+
+          echo "pr=$PR" >> $GITHUB_OUTPUT
+
+      - name: Generate commit summary
+        id: summary
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR=${{ steps.check.outputs.pr }}
+
+          # If PR exists, get commits from PR
+          if [ -n "$PR" ]; then
+            COMMITS=$(gh pr view "$PR" --json commits -q '
+              [.commits[].messageHeadline]
+              | unique
+              | .[]
+            ' | sed 's/^/- /')
+          else
+            # If no PR yet, use git log
+            COMMITS=$(git log origin/master..origin/beta \
+              --no-merges \
+              --pretty=format:"%h %s" \
+              | awk '!seen[$1]++' \
+              | cut -d' ' -f2- \
+              | awk '!seen[$0]++' \
+              | sed 's/^/- /' \
+              | head -20)
+          fi
+
+          if [ -z "$COMMITS" ]; then
+            echo "empty=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "empty=false" >> $GITHUB_OUTPUT
+          printf "%s\n" "$COMMITS" > commits.txt
+
+      - name: Create PR if not exists
+        if: steps.check.outputs.pr == '' && steps.summary.outputs.empty != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "## 🚀 Automated Release PR" > body.txt
+          echo "" >> body.txt
+          echo "This PR contains all changes from beta to master." >> body.txt
+          echo "" >> body.txt
+          echo "---" >> body.txt
+          echo "" >> body.txt
+          echo "## 📦 Latest Changes" >> body.txt
+          echo "" >> body.txt
+          echo "<!-- AUTO-GENERATED:START -->" >> body.txt
+          cat commits.txt >> body.txt
+          echo "<!-- AUTO-GENERATED:END -->" >> body.txt
+          echo "" >> body.txt
+          echo "---" >> body.txt
+          echo "" >> body.txt
+          echo "## 🧠 Notes" >> body.txt
+          echo "- Auto-managed PR" >> body.txt
+          echo "- Do not edit manually" >> body.txt
+
+          gh pr create \
+            --base master \
+            --head beta \
+            --title "🚀 Release: beta → master" \
+            --body-file body.txt
+
+      - name: Update PR summary
+        if: steps.check.outputs.pr != '' && steps.summary.outputs.empty != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR=${{ steps.check.outputs.pr }}
+
+          # Get existing body
+          gh pr view "$PR" --json body -q .body > old_body.txt
+
+          # Extract content BEFORE block
+          awk '/<!-- AUTO-GENERATED:START -->/{exit} {print}' old_body.txt > before.txt
+
+          # Extract content AFTER block
+          awk 'f;/<!-- AUTO-GENERATED:END -->/{f=1}' old_body.txt | tail -n +2 > after.txt
+
+          # Build new block
+          echo "<!-- AUTO-GENERATED:START -->" > block.txt
+          cat commits.txt >> block.txt
+          echo "<!-- AUTO-GENERATED:END -->" >> block.txt
+
+          # Combine cleanly
+          cat before.txt block.txt after.txt > final_body.txt
+
+          # Skip update if no changes
+          if diff -q old_body.txt final_body.txt > /dev/null 2>&1; then
+            echo "No changes in PR body"
+            exit 0
+          fi
+
+          # Update PR
+          gh pr edit "$PR" --body-file final_body.txt
