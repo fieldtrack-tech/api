@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 set -x
-trap 'echo "❌ Failed at line $LINENO"' ERR
+trap '[[ "${BASH_COMMAND}" != _ft_log* ]] && printf "[DEPLOY] ts=%s state=ROLLBACK level=ERROR msg=\"rollback script failed at line %s\"\n" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$LINENO"' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -93,7 +93,7 @@ if ! "$SCRIPT_DIR/deploy-bluegreen.sh" "$PREVIOUS_SHA"; then
     echo "SYSTEM STATE SNAPSHOT:"
     echo "  Active containers:"
     docker ps --format '  {{.Names}} → {{.Status}} ({{.Ports}})' 2>/dev/null || echo "  (docker ps failed)"
-    echo "  Active slot file: $(cat "$HOME/.fieldtrack-active-slot" 2>/dev/null || echo 'MISSING')"
+    echo "  Active slot file: $(cat "/var/run/fieldtrack/active-slot" 2>/dev/null || echo 'MISSING')"
     echo "  Nginx config test: $(sudo nginx -t 2>&1)"
     echo ""
     echo "Target SHA:    $PREVIOUS_SHA"

@@ -1,137 +1,348 @@
 #!/usr/bin/env bash
+# =============================================================================
+# deploy-bluegreen.sh — FieldTrack 2.0 Blue-Green Deployment
+#
+# State machine:
+#   INIT -> PRE_FLIGHT -> PULL_IMAGE -> RESOLVE_SLOT -> START_INACTIVE
+#        -> HEALTH_CHECK_INTERNAL -> SWITCH_NGINX -> HEALTH_CHECK_PUBLIC
+#        -> CLEANUP -> SUCCESS
+#
+# On failure:
+#   -> ROLLBACK (nginx restored, slot restored, failed container removed)
+#   -> ROLLBACK_COMPLETE  exit 1  -- deploy failed, system restored
+#   -> FAILURE            exit 2  -- deploy AND rollback failed, manual needed
+#
+# Slot state file: /var/run/fieldtrack/active-slot
+#   /var/run is a tmpfs (cleared on reboot). The _ft_resolve_slot() recovery
+#   function handles a missing file by inspecting running containers and the
+#   live nginx config, then re-writing the file. No manual step needed after
+#   a reboot or unexpected /run eviction.
+#
+# Exit codes:
+#   0  deployment succeeded
+#   1  deployment failed, automatic rollback succeeded (system restored)
+#   2  deployment AND rollback failed (requires manual intervention)
+# =============================================================================
 set -euo pipefail
 set -x
-trap 'echo "❌ Failed at line $LINENO"' ERR
+trap '_ft_trap_err "$LINENO"' ERR
 
-# ── CI Mode Support ────────────────────────────────────────────────────────────
-# When CI_MODE=true, the script simulates deployment without side effects
+# ---------------------------------------------------------------------------
+# STRUCTURED LOGGING  [DEPLOY] ts=<ISO8601> state=<STATE> <key=value ...>
+# { set +x; } 2>/dev/null inside helpers suppresses xtrace for the function
+# body so [DEPLOY] lines are not duplicated by xtrace noise.
+# ---------------------------------------------------------------------------
+_FT_STATE="INIT"
+
+_ft_log() {
+    { set +x; } 2>/dev/null
+    printf '[DEPLOY] ts=%s state=%s %s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$_FT_STATE" "$*"
+    set -x
+}
+
+_ft_state() {
+    { set +x; } 2>/dev/null
+    _FT_STATE="$1"; shift
+    printf '[DEPLOY] ts=%s state=%s %s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$_FT_STATE" "$*"
+    set -x
+}
+
+_ft_trap_err() {
+    { set +x; } 2>/dev/null
+    printf '[DEPLOY] ts=%s state=%s level=ERROR msg="unexpected failure at line %s"\n' \
+        "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$_FT_STATE" "$1"
+    set -x
+}
+
+# ---------------------------------------------------------------------------
+# SYSTEM SNAPSHOT -- emitted on any unrecoverable failure
+# ---------------------------------------------------------------------------
+_ft_snapshot() {
+    { set +x; } 2>/dev/null
+    printf '[DEPLOY] -- SYSTEM SNAPSHOT ----------------------------------------\n'
+    printf '[DEPLOY]   slot_file  = %s\n' "$(cat "${ACTIVE_SLOT_FILE:-/var/run/fieldtrack/active-slot}" 2>/dev/null || echo 'MISSING')"
+    printf '[DEPLOY]   nginx_port = %s\n' "$(grep -oP 'server 127\.0\.0\.1:\K[0-9]+' "${NGINX_CONF:-/etc/nginx/sites-enabled/fieldtrack.conf}" 2>/dev/null | head -1 || echo 'unreadable')"
+    printf '[DEPLOY]   containers =\n'
+    docker ps --format '[DEPLOY]     {{.Names}} -> {{.Status}} ({{.Ports}})' 2>/dev/null \
+        || printf '[DEPLOY]     (docker ps unavailable)\n'
+    printf '[DEPLOY] -----------------------------------------------------------\n'
+    set -x
+}
+
+# ---------------------------------------------------------------------------
+# CI MODE GUARD
+# ---------------------------------------------------------------------------
 CI_MODE="${CI_MODE:-false}"
 SKIP_EXTERNAL_SERVICES="${SKIP_EXTERNAL_SERVICES:-false}"
 
-# Safety guard: prevent production misuse
 if [ "$CI_MODE" != "true" ] && [ "$SKIP_EXTERNAL_SERVICES" = "true" ]; then
-    echo "❌ ERROR: SKIP_EXTERNAL_SERVICES=true is only allowed in CI_MODE"
-    echo "   This would deploy a container without Redis/Supabase/BullMQ to production"
+    _ft_log "level=ERROR msg='SKIP_EXTERNAL_SERVICES=true is only allowed in CI_MODE -- refusing to deploy without Redis/Supabase/BullMQ to production'"
     exit 1
 fi
 
 if [ "$CI_MODE" = "true" ]; then
-    echo "========================================="
-    echo "CI MODE ENABLED"
-    echo "Simulating deployment without side effects"
-    if [ "$SKIP_EXTERNAL_SERVICES" = "true" ]; then
-        echo "External services (Redis/Supabase/BullMQ) will be skipped"
-    fi
-    echo "========================================="
+    _ft_log "msg='CI_MODE=true -- deployment simulation without side effects'"
+    [ "$SKIP_EXTERNAL_SERVICES" = "true" ] && _ft_log "msg='SKIP_EXTERNAL_SERVICES=true -- external services skipped in container'"
 fi
 
+# ---------------------------------------------------------------------------
+# CONSTANTS
+# ---------------------------------------------------------------------------
 IMAGE="ghcr.io/fieldtrack-tech/fieldtrack-backend:${1:-latest}"
 IMAGE_SHA="${1:-latest}"
 
 BLUE_NAME="backend-blue"
 GREEN_NAME="backend-green"
-
 BLUE_PORT=3001
 GREEN_PORT=3002
 APP_PORT=3000
-
 NETWORK="fieldtrack_network"
 
-# Resolve paths relative to this script so the deploy script works
-# regardless of the working directory it is invoked from.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
-# Load and validate environment.
-# Sets: DEPLOY_ROOT, ENV_FILE, API_HOSTNAME.
-# Exports all variables from apps/api/.env into this process.
-# Disable trace to prevent secrets from leaking into logs.
+# Slot state directory and file.
+# /var/run/fieldtrack/ is chosen over /tmp (world-writable, cleaned by tmpwatch)
+# and $HOME (variable path, not auditable as runtime state).
+# /var/run IS a tmpfs -- the _ft_resolve_slot() recovery handles missing files.
+SLOT_DIR="/var/run/fieldtrack"
+ACTIVE_SLOT_FILE="$SLOT_DIR/active-slot"
+
+NGINX_CONF="/etc/nginx/sites-enabled/fieldtrack.conf"
+NGINX_TEMPLATE="$REPO_DIR/infra/nginx/fieldtrack.conf"
+MAX_HISTORY=5
+MAX_HEALTH_ATTEMPTS=40
+HEALTH_INTERVAL=3
+LOCK_FILE="$SLOT_DIR/deploy.lock"
+SNAP_DIR="$SLOT_DIR"
+LAST_GOOD_FILE="$SNAP_DIR/last-good"
+
+# ---------------------------------------------------------------------------
+# DEPLOYMENT LOCK -- prevent concurrent deploys
+# ---------------------------------------------------------------------------
+_ft_acquire_lock() {
+    if [ "$CI_MODE" = "true" ]; then
+        _ft_log "msg='CI_MODE=true -- skipping lock acquisition'"
+        return 0
+    fi
+    _ft_ensure_slot_dir
+    _ft_log "msg='acquiring deployment lock' pid=$$ file=$LOCK_FILE"
+    exec 200>"$LOCK_FILE"
+    if ! flock -n 200; then
+        _ft_log "level=ERROR msg='another deployment already in progress -- aborting' pid=$$"
+        exit 1
+    fi
+    _ft_log "msg='deployment lock acquired' pid=$$ file=$LOCK_FILE"
+    # Ensure lock is released on exit
+    trap '_ft_release_lock' EXIT
+}
+
+_ft_release_lock() {
+    { set +x; } 2>/dev/null
+    printf '[DEPLOY] ts=%s state=%s msg="releasing deployment lock" pid=%s\n' \
+        "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$_FT_STATE" "$$"
+    [ -n "${200:-}" ] && exec 200>&- 2>/dev/null || true
+    set -x
+}
+
+# ---------------------------------------------------------------------------
+# EXTERNAL ENDPOINT CHECK WITH RETRY + BACKOFF
+# Smooths transient CDN/TLS edge jitter while maintaining strict semantics
+# ---------------------------------------------------------------------------
+_ft_check_external_ready() {
+    { set +x; } 2>/dev/null
+    local url="https://$API_HOSTNAME/ready"
+    local attempt=0
+    
+    for attempt in 1 2 3; do
+        local body
+        body=$(curl -s --max-time 3 "$url" 2>/dev/null || echo "")
+        if echo "$body" | grep -q '"status":"ready"' 2>/dev/null; then
+            set -x
+            return 0
+        fi
+        if [ "$attempt" -lt 3 ]; then
+            sleep "$attempt"
+        fi
+    done
+    
+    set -x
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# SLOT DIRECTORY AND FILE MANAGEMENT
+# ---------------------------------------------------------------------------
+_ft_ensure_slot_dir() {
+    # No-op in CI -- slot file is not used in simulation mode.
+    [ "$CI_MODE" = "true" ] && return 0
+    if [ ! -d "$SLOT_DIR" ]; then
+        _ft_log "msg='slot dir missing, creating' path=$SLOT_DIR"
+        sudo mkdir -p "$SLOT_DIR"
+        # Owned by the deploy user so subsequent writes do not need sudo.
+        sudo chown "$(id -un):$(id -gn)" "$SLOT_DIR"
+        sudo chmod 750 "$SLOT_DIR"
+    fi
+}
+
+_ft_write_slot() {
+    local slot="$1"
+    [ "$CI_MODE" = "true" ] && return 0
+    _ft_ensure_slot_dir
+    local slot_tmp
+    slot_tmp=$(mktemp "${SLOT_DIR}/active-slot.XXXXXX")
+    printf '%s\n' "$slot" > "$slot_tmp"
+    mv "$slot_tmp" "$ACTIVE_SLOT_FILE"
+    _ft_log "msg='slot file updated (atomic)' slot=$slot path=$ACTIVE_SLOT_FILE"
+}
+
+# _ft_resolve_slot -- returns the active slot name, recovering from a missing
+# or corrupt slot file by inspecting running containers and the live nginx config.
+#
+# Recovery precedence (production only):
+#   1. slot file value            (happy path)
+#   2. only blue running          -> blue
+#   3. only green running         -> green
+#   4. both running               -> nginx upstream port as tiebreaker
+#   5. neither running            -> green  (first deploy; inactive = blue)
+_ft_resolve_slot() {
+    if [ "$CI_MODE" = "true" ]; then
+        # CI default: active=green so deploy always targets blue (inactive).
+        echo "green"
+        return 0
+    fi
+
+    _ft_ensure_slot_dir
+
+    # Happy path -- slot file exists and is valid.
+    if [ -f "$ACTIVE_SLOT_FILE" ]; then
+        local current_slot
+        current_slot=$(tr -d '[:space:]' < "$ACTIVE_SLOT_FILE")
+        if [ "$current_slot" = "blue" ] || [ "$current_slot" = "green" ]; then
+            _ft_log "msg='slot file read' slot=$current_slot"
+            echo "$current_slot"
+            return 0
+        fi
+        _ft_log "level=WARN msg='slot file has invalid value, recovering' value=${current_slot}"
+    else
+        _ft_log "level=WARN msg='slot file missing, recovering from container state' path=$ACTIVE_SLOT_FILE"
+    fi
+
+    # Recovery -- infer from running containers, then nginx config.
+    local blue_running=false green_running=false recovered_slot=""
+    docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${BLUE_NAME}$"  && blue_running=true  || true
+    docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${GREEN_NAME}$" && green_running=true || true
+
+    if [ "$blue_running" = "true" ] && [ "$green_running" = "false" ]; then
+        recovered_slot="blue"
+        _ft_log "msg='recovery: only blue running' slot=blue"
+    elif [ "$green_running" = "true" ] && [ "$blue_running" = "false" ]; then
+        recovered_slot="green"
+        _ft_log "msg='recovery: only green running' slot=green"
+    elif [ "$blue_running" = "true" ] && [ "$green_running" = "true" ]; then
+        # Both running -- read nginx upstream port as authoritative tiebreaker.
+        local nginx_port
+        nginx_port=$(grep -oP 'server 127\.0\.0\.1:\K[0-9]+' "$NGINX_CONF" 2>/dev/null | head -1 || echo "")
+        if [ "$nginx_port" = "$BLUE_PORT" ]; then recovered_slot="blue"
+        elif [ "$nginx_port" = "$GREEN_PORT" ]; then recovered_slot="green"
+        else
+            recovered_slot="blue"
+            _ft_log "level=WARN msg='both containers running and nginx port ambiguous, defaulting to blue' nginx_port=${nginx_port}"
+        fi
+        _ft_log "msg='recovery: both containers running, nginx tiebreaker' nginx_port=${nginx_port} slot=${recovered_slot}"
+    else
+        # Neither running -- first deploy.
+        recovered_slot="green"
+        _ft_log "msg='recovery: no containers running, assuming first deploy' slot=green"
+    fi
+
+    # Persist the recovered value (atomic write).
+    local slot_tmp
+    slot_tmp=$(mktemp "${SLOT_DIR}/active-slot.XXXXXX")
+    printf '%s\n' "$recovered_slot" > "$slot_tmp"
+    mv "$slot_tmp" "$ACTIVE_SLOT_FILE"
+    _ft_log "msg='slot file recreated (atomic)' slot=$recovered_slot"
+    echo "$recovered_slot"
+}
+
+# ---------------------------------------------------------------------------
+# ACQUIRE DEPLOYMENT LOCK
+# ---------------------------------------------------------------------------
+_ft_acquire_lock
+
+# ---------------------------------------------------------------------------
+# PRE-FLIGHT: load environment + validate contract
+# ---------------------------------------------------------------------------
+_ft_state "PRE_FLIGHT" "msg='loading and validating environment'"
+
+# Log last-known-good state for faster triage
+_LAST_GOOD=$(cat "$LAST_GOOD_FILE" 2>/dev/null || echo "none")
+_ft_log "msg='startup recovery info' last_good=$_LAST_GOOD"
+
+# Disable xtrace while sourcing .env to prevent secrets in logs.
 set +x
 source "$SCRIPT_DIR/load-env.sh"
 set -x
 
+# DEPLOY_ROOT is now exported by load-env.sh.
+DEPLOY_HISTORY="$DEPLOY_ROOT/apps/api/.deploy_history"
+
 if [ "$CI_MODE" = "true" ] && [ "${APP_ENV:-}" = "production" ]; then
-    echo "❌ ERROR: CI_MODE=true cannot run with APP_ENV=production"
-    echo "   This is a safety guard to prevent production-intent deploy simulation misuse."
+    _ft_log "level=ERROR msg='CI_MODE=true cannot run with APP_ENV=production -- safety guard'"
     exit 1
 fi
 
-NGINX_CONF="/etc/nginx/sites-enabled/fieldtrack.conf"
-NGINX_TEMPLATE="$REPO_DIR/infra/nginx/fieldtrack.conf"
-ACTIVE_SLOT_FILE="$HOME/.fieldtrack-active-slot"
-DEPLOY_HISTORY="$DEPLOY_ROOT/apps/api/.deploy_history"
-MAX_HISTORY=5
+_ft_log "msg='environment loaded' api_hostname=$API_HOSTNAME"
 
-MAX_HEALTH_ATTEMPTS=40
-HEALTH_INTERVAL=3
-
-# API_HOSTNAME is already validated and exported by load-env.sh.
-# It is the bare hostname derived from API_BASE_URL (e.g. api.fieldtrack.app).
-echo "✓ API_HOSTNAME: $API_HOSTNAME"
-
-# ---------------------------------------------------------------------------
-# Pre-flight: full env contract validation.
-# Covers required vars, API_BASE_URL format, API_HOSTNAME derivation, and
-# METRICS_SCRAPE_TOKEN alignment between apps/api/.env and infra/.env.monitoring.
-# validate-env.sh is self-sufficient (sources load-env.sh internally).
-# Disable trace to prevent token values from leaking into logs.
-# validate-env.sh exits non-zero on any failure — set -e aborts the deploy here.
-# ---------------------------------------------------------------------------
-echo "--- Pre-flight: env contract validation ---"
 set +x
 "$SCRIPT_DIR/validate-env.sh" --check-monitoring
 set -x
 
-echo "========================================="
-echo "FieldTrack Blue-Green Deployment Started"
-echo "========================================="
-echo "Image SHA: $IMAGE_SHA"
+_ft_log "msg='env contract validated'"
 
-echo "[1/8] Pulling image..."
+# ---------------------------------------------------------------------------
+# [1/7] PULL IMAGE
+# ---------------------------------------------------------------------------
+_ft_state "PULL_IMAGE" "msg='pulling container image' sha=$IMAGE_SHA"
+
 if [ "$CI_MODE" = "true" ]; then
-    echo "CI MODE: Skipping image pull (using local image)"
+    _ft_log "msg='CI_MODE=true -- skipping image pull, using local image'"
 else
     docker pull "$IMAGE"
+    _ft_log "msg='image pulled' image=$IMAGE"
 fi
 
-echo "[2/8] Detecting active container..."
+# ---------------------------------------------------------------------------
+# [2/7] RESOLVE ACTIVE SLOT (with recovery)
+# ---------------------------------------------------------------------------
+_ft_state "RESOLVE_SLOT" "msg='determining active slot'"
 
-# Read active slot from state file (first deploy defaults to green → blue becomes inactive)
-if [ -f "$ACTIVE_SLOT_FILE" ] && [ "$(cat "$ACTIVE_SLOT_FILE")" = "blue" ]; then
-    ACTIVE="blue"
-    ACTIVE_NAME=$BLUE_NAME
-    ACTIVE_PORT=$BLUE_PORT
+ACTIVE=$(_ft_resolve_slot)
 
-    INACTIVE="green"
-    INACTIVE_NAME=$GREEN_NAME
-    INACTIVE_PORT=$GREEN_PORT
+if [ "$ACTIVE" = "blue" ]; then
+    ACTIVE_NAME=$BLUE_NAME;   ACTIVE_PORT=$BLUE_PORT
+    INACTIVE="green"; INACTIVE_NAME=$GREEN_NAME; INACTIVE_PORT=$GREEN_PORT
 else
-    ACTIVE="green"
-    ACTIVE_NAME=$GREEN_NAME
-    ACTIVE_PORT=$GREEN_PORT
-
-    INACTIVE="blue"
-    INACTIVE_NAME=$BLUE_NAME
-    INACTIVE_PORT=$BLUE_PORT
+    ACTIVE_NAME=$GREEN_NAME;  ACTIVE_PORT=$GREEN_PORT
+    INACTIVE="blue";  INACTIVE_NAME=$BLUE_NAME;  INACTIVE_PORT=$BLUE_PORT
 fi
 
-echo "Active container   : $ACTIVE ($ACTIVE_PORT)"
-echo "Inactive container : $INACTIVE ($INACTIVE_PORT)"
+_ft_log "msg='slot resolved' active=$ACTIVE active_port=$ACTIVE_PORT inactive=$INACTIVE inactive_port=$INACTIVE_PORT"
 
-echo "[3/8] Starting inactive container..."
+# ---------------------------------------------------------------------------
+# [3/7] START INACTIVE CONTAINER
+# ---------------------------------------------------------------------------
+_ft_state "START_INACTIVE" "msg='starting inactive container' name=$INACTIVE_NAME port=$INACTIVE_PORT"
 
-# CI MODE: Ensure Docker network exists
 if [ "$CI_MODE" = "true" ]; then
-    echo "CI MODE: Ensuring Docker network exists..."
     if ! docker network inspect "$NETWORK" >/dev/null 2>&1; then
         docker network create "$NETWORK"
-        echo "✓ Created network: $NETWORK"
-    else
-        echo "✓ Network already exists: $NETWORK"
+        _ft_log "msg='created docker network' network=$NETWORK"
     fi
 fi
 
 if docker ps -a --format '{{.Names}}' | grep -Eq "^${INACTIVE_NAME}$"; then
+    _ft_log "msg='removing stale container' name=$INACTIVE_NAME"
     docker rm -f "$INACTIVE_NAME"
 fi
 
@@ -145,269 +356,311 @@ docker run -d \
   -e SKIP_EXTERNAL_SERVICES="${SKIP_EXTERNAL_SERVICES:-false}" \
   "$IMAGE"
 
-echo "[4/8] Waiting for readiness check..."
+_ft_log "msg='container started' name=$INACTIVE_NAME port=$INACTIVE_PORT"
 
-# Give the server a moment to boot
+# ---------------------------------------------------------------------------
+# [4/7] INTERNAL HEALTH CHECK
+#   CI   -> /health  (no external dependencies)
+#   Prod -> /ready   (validates Redis, Supabase, BullMQ)
+# ---------------------------------------------------------------------------
+_ft_state "HEALTH_CHECK_INTERNAL" "msg='waiting for container readiness'"
+
 sleep 5
+HEALTH_ENDPOINT="/ready"
+[ "$CI_MODE" = "true" ] && HEALTH_ENDPOINT="/health"
 
 ATTEMPT=0
-
-# CI MODE: Use /health (no dependencies)
-# Production: Use /ready (validates Redis, Supabase, BullMQ)
-if [ "$CI_MODE" = "true" ]; then
-    HEALTH_ENDPOINT="/health"
-else
-    HEALTH_ENDPOINT="/ready"
-fi
-
 until true; do
-    ATTEMPT=$((ATTEMPT+1))
-
+    ATTEMPT=$((ATTEMPT + 1))
     STATUS=$(curl --max-time 2 -s -o /dev/null -w "%{http_code}" \
-        "http://127.0.0.1:$INACTIVE_PORT$HEALTH_ENDPOINT" || echo "000")
+        "http://127.0.0.1:$INACTIVE_PORT${HEALTH_ENDPOINT}" || echo "000")
 
-    # Success condition
     if [ "$STATUS" = "200" ]; then
-        echo "Readiness check passed."
+        _ft_log "msg='internal health check passed' endpoint=$HEALTH_ENDPOINT attempts=$ATTEMPT"
         break
     fi
 
-    # Check if container crashed
     if ! docker ps --format '{{.Names}}' | grep -q "^${INACTIVE_NAME}$"; then
-        echo "ERROR: Container $INACTIVE_NAME stopped unexpectedly."
+        _ft_log "level=ERROR msg='container exited unexpectedly' name=$INACTIVE_NAME"
         docker logs "$INACTIVE_NAME" --tail 100 || true
         docker rm -f "$INACTIVE_NAME" || true
         exit 1
     fi
 
-    # Timeout condition
     if [ "$ATTEMPT" -ge "$MAX_HEALTH_ATTEMPTS" ]; then
-        echo "Readiness check failed after $MAX_HEALTH_ATTEMPTS attempts."
-        echo "Last HTTP status: $STATUS"
-        echo "Endpoint: http://127.0.0.1:$INACTIVE_PORT$HEALTH_ENDPOINT"
-
+        _ft_log "level=ERROR msg='internal health check timed out' attempts=$ATTEMPT status=$STATUS endpoint=http://127.0.0.1:$INACTIVE_PORT${HEALTH_ENDPOINT}"
         docker logs "$INACTIVE_NAME" --tail 100 || true
         docker rm -f "$INACTIVE_NAME" || true
         exit 1
     fi
 
-    echo "  Attempt $ATTEMPT/$MAX_HEALTH_ATTEMPTS — status $STATUS — waiting ${HEALTH_INTERVAL}s..."
+    _ft_log "msg='waiting for readiness' attempt=$ATTEMPT/$MAX_HEALTH_ATTEMPTS status=$STATUS interval=${HEALTH_INTERVAL}s"
     sleep "$HEALTH_INTERVAL"
 done
 
-echo "Readiness check passed."
-
-echo "[5/8] Switching nginx upstream..."
+# ---------------------------------------------------------------------------
+# [5/7] SWITCH NGINX UPSTREAM
+# ---------------------------------------------------------------------------
+_ft_state "SWITCH_NGINX" "msg='switching nginx upstream' port=$INACTIVE_PORT"
 
 if [ "$CI_MODE" = "true" ]; then
-    echo "CI MODE: Skipping nginx configuration (no side effects)"
+    _ft_log "msg='CI_MODE=true -- skipping nginx switch'"
+    # Write slot in CI so the next simulated deploy targets the correct container.
+    _ft_write_slot "$INACTIVE"
 else
-    # Backup goes to /etc/nginx/ (not sites-enabled/) so nginx does not load it
+    # Backup goes to /etc/nginx/ (NOT sites-enabled/) so nginx does not parse it
     # during validation and trigger a duplicate-upstream error.
     NGINX_BACKUP="/etc/nginx/fieldtrack.conf.bak.$(date +%s)"
     NGINX_TMP="$(mktemp /tmp/fieldtrack-nginx.XXXXXX.conf)"
 
-    # Generate a fresh nginx config from the repo template.
-    # Only __BACKEND_PORT__ and __API_HOSTNAME__ are substituted — nothing else.
     sed \
         -e "s|__BACKEND_PORT__|$INACTIVE_PORT|g" \
         -e "s|__API_HOSTNAME__|$API_HOSTNAME|g" \
         "$NGINX_TEMPLATE" > "$NGINX_TMP"
 
-    # Save the current live config so we can restore it if validation fails.
     sudo cp "$NGINX_CONF" "$NGINX_BACKUP"
-
-    # Install the generated config.
     sudo cp "$NGINX_TMP" "$NGINX_CONF"
     rm -f "$NGINX_TMP"
-
-    # Remove any stale backup files that were accidentally left in sites-enabled/
-    # by previous deployments. Nginx loads all files in this directory and a
-    # leftover backup defines a duplicate upstream, failing the config test.
+    # Remove stale backups accidentally left in sites-enabled/ by old deploy runs.
     sudo rm -f /etc/nginx/sites-enabled/fieldtrack.conf.bak.*
-fi
 
-echo "[6/8] Validating and reloading nginx..."
-
-if [ "$CI_MODE" = "true" ]; then
-    echo "CI MODE: Skipping nginx reload (no side effects)"
-else
     if ! sudo nginx -t 2>&1; then
-        echo "ERROR: nginx configuration test failed. Restoring backup..."
+        _ft_log "level=ERROR msg='nginx config test failed -- restoring backup'"
         sudo cp "$NGINX_BACKUP" "$NGINX_CONF"
-        echo "Backup restored. Deployment aborted."
         exit 1
     fi
 
     sudo systemctl reload nginx
+    _ft_log "msg='nginx reloaded' upstream=127.0.0.1:$INACTIVE_PORT"
 
-    # Persist new active slot so the next deploy reads it correctly
-    echo "$INACTIVE" > "$ACTIVE_SLOT_FILE"
+    # Write the slot file AFTER nginx reload so it always reflects what nginx
+    # is currently serving. If the public health check then fails and we roll
+    # back, we restore nginx AND overwrite this file back to $ACTIVE.
+    _ft_write_slot "$INACTIVE"
+
+    # Small settle window to stabilize TLS/keep-alive/edge cases
+    sleep 2
 fi
 
-echo "[7/8] Post-deploy public health check..."
+# ---------------------------------------------------------------------------
+# [6/7] PUBLIC HEALTH CHECK (end-to-end)
+#   Three-part validation:
+#   1. HTTP 200              -- TLS, DNS, Cloudflare, nginx routing all ok
+#   2. Body "status":"ready" -- /ready reached Fastify; Redis/Supabase/BullMQ ok
+#   3. Port alignment        -- live nginx config points at $INACTIVE_PORT exactly
+#                               (catches failed template substitution)
+# ---------------------------------------------------------------------------
+_ft_state "HEALTH_CHECK_PUBLIC" "msg='end-to-end public health check' url=https://$API_HOSTNAME/ready"
 
 if [ "$CI_MODE" = "true" ]; then
-    echo "CI MODE: Skipping public health check (DNS/TLS not available in CI)"
-    echo "✓ Internal health check already passed in step 4"
+    _ft_log "msg='CI_MODE=true -- skipping public check (no DNS/TLS in CI), internal check already passed'"
 else
-    # Three-part end-to-end validation:
-    #   1. HTTP 200 from public URL — proves TLS, DNS, and Cloudflare routing work.
-    #   2. Body contains "status":"ok" — proves nginx forwarded to /health (not /)
-    #      and the request reached the correct Fastify handler.
-    #   3. Nginx port alignment — proves the slot switch actually landed. Reads the
-    #      upstream port from the live nginx config and compares against INACTIVE_PORT.
-    #      Catches partial deploys where nginx reloaded but still points at the old slot.
-    #
-    # Brief settle time — nginx needs a moment to apply the new upstream config
-    # before forwarding connections cleanly.
+    # Give nginx a moment to apply the reloaded config cleanly.
     sleep 3
-    _PUBLIC_HEALTH_URL="https://$API_HOSTNAME/health"
-    echo "  Probing: $_PUBLIC_HEALTH_URL"
-    _PUBLIC_CHECK_PASSED=false
-    _PUBLIC_LAST_STATUS="000"
-    _PUBLIC_LAST_BODY=""
+
+    _PUB_URL="https://$API_HOSTNAME/ready"
+    _PUB_PASSED=false
+    _PUB_STATUS="000"
+
     for _attempt in 1 2 3 4 5; do
-        _PUBLIC_LAST_BODY=$(mktemp)
-        _PUBLIC_LAST_STATUS=$(curl --max-time 10 -sS -o "$_PUBLIC_LAST_BODY" -w "%{http_code}" \
-            "$_PUBLIC_HEALTH_URL" 2>&1 || echo "000")
-        if [ "$_PUBLIC_LAST_STATUS" = "200" ] && grep -q '"status":"ok"' "$_PUBLIC_LAST_BODY" 2>/dev/null; then
-            _PUBLIC_CHECK_PASSED=true
-            rm -f "$_PUBLIC_LAST_BODY"
+        _PUB_BODY=$(mktemp)
+        _PUB_STATUS=$(curl --max-time 10 -sS -o "$_PUB_BODY" -w "%{http_code}" "$_PUB_URL" 2>&1 || echo "000")
+
+        if [ "$_PUB_STATUS" = "200" ] && grep -q '"status":"ready"' "$_PUB_BODY" 2>/dev/null; then
+            _PUB_PASSED=true
+            rm -f "$_PUB_BODY"
             break
         fi
-        echo "  Attempt $_attempt/5 — HTTP $_PUBLIC_LAST_STATUS — waiting 5s..."
-        rm -f "$_PUBLIC_LAST_BODY"
+
+        _ft_log "msg='public health attempt failed' attempt=$_attempt/5 status=$_PUB_STATUS url=$_PUB_URL"
+        rm -f "$_PUB_BODY"
         sleep 5
     done
 
-    # Port alignment check — nginx live config must point at the new slot's port.
-    # This catches the case where nginx reloaded but the upstream was not updated
-    # (e.g. template substitution failed silently).
-    _NGINX_ACTIVE_PORT=$(grep -oP 'server 127\.0\.0\.1:\K[0-9]+' "$NGINX_CONF" 2>/dev/null | head -1 || echo "")
-    if [ -n "$_NGINX_ACTIVE_PORT" ] && [ "$_NGINX_ACTIVE_PORT" != "$INACTIVE_PORT" ]; then
-        echo ""
-        echo "❌ NGINX PORT MISMATCH after reload:"
-        echo "   Expected nginx upstream: 127.0.0.1:$INACTIVE_PORT (new slot)"
-        echo "   Actual nginx upstream:   127.0.0.1:$_NGINX_ACTIVE_PORT"
-        echo "   Nginx did not switch to the new slot — forcing rollback."
-        _PUBLIC_CHECK_PASSED=false
+    # Port alignment check -- live nginx config MUST point at the new slot's port.
+    _NGINX_PORT=$(grep -oP 'server 127\.0\.0\.1:\K[0-9]+' "$NGINX_CONF" 2>/dev/null | head -1 || echo "")
+    if [ -n "$_NGINX_PORT" ] && [ "$_NGINX_PORT" != "$INACTIVE_PORT" ]; then
+        _ft_log "level=ERROR msg='nginx port mismatch -- slot switch did not take effect' expected=$INACTIVE_PORT actual=$_NGINX_PORT"
+        _PUB_PASSED=false
     fi
 
-    if [ "$_PUBLIC_CHECK_PASSED" != "true" ]; then
-        echo ""
-        echo "❌ POST-DEPLOY PUBLIC HEALTH CHECK FAILED: $_PUBLIC_HEALTH_URL"
-        echo "   Last HTTP status: $_PUBLIC_LAST_STATUS"
-        echo "   Container passed internal readiness but is not reachable publicly."
-        echo ""
-        echo "   Diagnostics:"
-        echo "   — DNS resolution: $(getent hosts "$API_HOSTNAME" 2>/dev/null || echo 'FAILED')"
-        echo "   — Active containers: $(docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null || echo 'unavailable')"
-        echo "   — Nginx upstream port in config: $(grep -oP 'server 127\.0\.0\.1:\K[0-9]+' "$NGINX_CONF" 2>/dev/null || echo 'unreadable')"
-        echo "   Possible causes: TLS cert, DNS, nginx upstream config, firewall, Cloudflare."
-        echo ""
-        echo "   Restoring previous nginx config and slot..."
+    if [ "$_PUB_PASSED" != "true" ]; then
+        _ft_state "ROLLBACK" "reason='public health check failed' url=$_PUB_URL last_status=$_PUB_STATUS"
+        _ft_snapshot
+
+        _ft_log "msg='restoring previous nginx config'"
         sudo cp "$NGINX_BACKUP" "$NGINX_CONF"
         if sudo nginx -t 2>&1 && sudo systemctl reload nginx; then
-            echo "   ✓ Previous nginx config restored."
+            _ft_log "msg='nginx restored to previous config'"
         else
-            echo "   ⚠ Could not restore nginx config automatically — check manually."
+            _ft_log "level=ERROR msg='nginx restore failed -- check manually'"
         fi
-        echo "$ACTIVE" > "$ACTIVE_SLOT_FILE"
+
+        # Restore slot file to the slot that was active before this deploy attempt.
+        _ft_write_slot "$ACTIVE"
         docker rm -f "$INACTIVE_NAME" || true
-        # Auto-rollback to previous image — but only if this deploy is not itself
-        # an auto-rollback, to prevent an infinite loop:
-        #   deploy → fail → rollback.sh → deploy(prev) → fail → (stop here)
+
+        unset _PUB_URL _PUB_PASSED _attempt _PUB_STATUS _PUB_BODY _NGINX_PORT
+
         if [ "${FIELDTRACK_ROLLBACK_IN_PROGRESS:-0}" != "1" ]; then
-            echo ""
-            echo "Triggering automatic rollback to previous stable image..."
+            _ft_log "msg='triggering image rollback to previous stable SHA'"
             export FIELDTRACK_ROLLBACK_IN_PROGRESS=1
             if ! "$SCRIPT_DIR/rollback.sh" --auto; then
-                echo ""
-                echo "========================================="
-                echo "❌ CRITICAL: ROLLBACK FAILED"
-                echo "========================================="
-                echo "Both deployment and automatic rollback have failed."
-                echo ""
-                echo "SYSTEM STATE SNAPSHOT:"
-                echo "  Active containers:"
-                docker ps --format '  {{.Names}} → {{.Status}} ({{.Ports}})' 2>/dev/null || echo "  (docker ps failed)"
-                echo "  Active slot file: $(cat "$ACTIVE_SLOT_FILE" 2>/dev/null || echo 'MISSING')"
-                echo "  Nginx upstream port: $(grep -oP 'server 127\.0\.0\.1:\K[0-9]+' "$NGINX_CONF" 2>/dev/null || echo 'unreadable')"
-                echo "  Nginx config test: $(sudo nginx -t 2>&1)"
-                echo ""
-                echo "Manual intervention required immediately."
-                echo "========================================="
+                _ft_state "FAILURE" "reason='deploy_and_rollback_both_failed'"
+                _ft_snapshot
                 exit 2
             fi
+            _ft_state "ROLLBACK_COMPLETE" "msg='deploy failed but automatic rollback succeeded -- system restored'"
         else
-            echo "Already in rollback sequence — stopping without recursive rollback."
+            _ft_log "msg='nested rollback guard reached -- stopping to prevent infinite loop'"
+            _ft_state "FAILURE" "reason='nested_rollback_guard'"
         fi
+
         exit 1
     fi
-    unset _PUBLIC_HEALTH_URL _PUBLIC_CHECK_PASSED _attempt _PUBLIC_LAST_STATUS _PUBLIC_LAST_BODY _NGINX_ACTIVE_PORT
-    echo "✓ Public health check passed (HTTP 200, body ok, nginx port $INACTIVE_PORT confirmed)."
+
+    unset _PUB_URL _PUB_PASSED _attempt _PUB_STATUS _PUB_BODY _NGINX_PORT
+    _ft_log "msg='public health check passed' port=$INACTIVE_PORT url=https://$API_HOSTNAME/ready"
 fi
 
-echo "[8/8] Cleaning old container..."
+# ---------------------------------------------------------------------------
+# [7/7] CLEANUP + SUCCESS
+# ---------------------------------------------------------------------------
+_ft_state "CLEANUP" "msg='removing previous active container' name=$ACTIVE_NAME"
 
 if [ "$CI_MODE" = "true" ]; then
-    echo "CI MODE: Skipping old container cleanup (no active container in CI)"
+    _ft_log "msg='CI_MODE=true -- skipping container cleanup'"
 else
     docker rm -f "$ACTIVE_NAME" || true
+    _ft_log "msg='previous container removed' name=$ACTIVE_NAME"
 fi
 
-echo "========================================="
-echo "Deployment successful."
-echo "$INACTIVE_NAME container is now LIVE."
-echo "========================================="
+_ft_state "SUCCESS" "msg='deployment complete' container=$INACTIVE_NAME sha=$IMAGE_SHA slot=$INACTIVE port=$INACTIVE_PORT"
 
 if [ "$CI_MODE" = "true" ]; then
-    echo "CI MODE: Skipping deploy history and monitoring stack updates"
-    echo "✓ CI deployment simulation completed successfully"
+    _ft_log "msg='CI deployment simulation complete'"
     exit 0
 fi
 
-# Record successful deployment for rollback capability
-# Maintain history of last MAX_HISTORY deployments
-# Use atomic write to prevent partial history corruption
-DEPLOY_HISTORY_TMP="${DEPLOY_HISTORY}.tmp.$$"
-if [ -f "$DEPLOY_HISTORY" ]; then
-    # Prepend new SHA and keep only MAX_HISTORY entries
-    (echo "$IMAGE_SHA"; head -n $((MAX_HISTORY - 1)) "$DEPLOY_HISTORY") > "$DEPLOY_HISTORY_TMP"
-    mv "$DEPLOY_HISTORY_TMP" "$DEPLOY_HISTORY"
+# ---------------------------------------------------------------------------
+# FINAL TRUTH CHECK -- verify state matches deployment intent
+# Compares internal (localhost) vs external (DNS/Cloudflare) endpoint health
+# to catch routing, TLS, and proxy anomalies
+# ---------------------------------------------------------------------------
+_FT_TRUTH_CHECK_PASSED=true
+
+# (1) Verify slot file is correctly written
+if [ -f "$ACTIVE_SLOT_FILE" ]; then
+    _SLOT_VALUE=$(cat "$ACTIVE_SLOT_FILE" | tr -d '[:space:]')
+    if [ "$_SLOT_VALUE" != "$INACTIVE" ]; then
+        _ft_log "level=ERROR msg='truth check failed: slot file mismatch' expected=$INACTIVE actual=$_SLOT_VALUE"
+        _FT_TRUTH_CHECK_PASSED=false
+    else
+        _ft_log "msg='truth check: slot file correct' slot=$_SLOT_VALUE"
+    fi
 else
-    # Create new history file
-    echo "$IMAGE_SHA" > "$DEPLOY_HISTORY_TMP"
-    mv "$DEPLOY_HISTORY_TMP" "$DEPLOY_HISTORY"
+    _ft_log "level=ERROR msg='truth check failed: slot file missing'"
+    _FT_TRUTH_CHECK_PASSED=false
 fi
 
-echo "Deployment history updated: $IMAGE_SHA"
+# (2) Verify nginx upstream port matches target
+_NGINX_PORT=$(grep -oP 'server 127\.0\.0\.1:\K[0-9]+' "$NGINX_CONF" 2>/dev/null | head -1 || echo "")
+if [ -n "$_NGINX_PORT" ]; then
+    if [ "$_NGINX_PORT" != "$INACTIVE_PORT" ]; then
+        _ft_log "level=ERROR msg='truth check failed: nginx port mismatch' expected=$INACTIVE_PORT actual=$_NGINX_PORT"
+        _FT_TRUTH_CHECK_PASSED=false
+    else
+        _ft_log "msg='truth check: nginx port correct' port=$_NGINX_PORT"
+    fi
+else
+    _ft_log "level=WARN msg='truth check: could not read nginx port'"
+fi
 
-# ---------------------------------------------------------------------------
-# Monitoring stack: only restart when infra configs have actually changed.
-# Hash covers all infra config files INCLUDING docker-compose.monitoring.yml.
-# EXCLUDES only nginx template (nginx is rerendered on every deploy above
-# and does not require a monitoring restart).
-# ---------------------------------------------------------------------------
-echo "[monitoring] Checking monitoring stack configuration..."
+# (3) Compare internal vs external endpoint health
+# Internal: direct container endpoint  (127.0.0.1:$INACTIVE_PORT/ready)
+# External: production DNS/Cloudflare   (https://$API_HOSTNAME/ready)
+# Mismatch indicates routing, TLS, or proxy issues
+if command -v curl >/dev/null 2>&1; then
+    sleep 2
+
+    # Check internal endpoint
+    _INT_READY=$(curl -s -m 5 "http://127.0.0.1:$INACTIVE_PORT/ready" 2>/dev/null || echo "")
+    _INT_READY_OK=false
+    if echo "$_INT_READY" | grep -q '"status":"ready"' 2>/dev/null; then
+        _INT_READY_OK=true
+        _ft_log "msg='truth check: internal endpoint ready' url=http://127.0.0.1:$INACTIVE_PORT/ready"
+    else
+        _ft_log "level=WARN msg='truth check: internal endpoint not ready' url=http://127.0.0.1:$INACTIVE_PORT/ready response=${_INT_READY:0:100}"
+    fi
+
+    # Check external endpoint (DNS/Cloudflare/TLS)
+    # Uses retry + backoff to smooth transient edge jitter
+    _EXT_READY_OK=false
+    if _ft_check_external_ready; then
+        _EXT_READY_OK=true
+        _ft_log "msg='truth check: external endpoint ready (retry succeeded)' url=https://$API_HOSTNAME/ready"
+    else
+        _ft_log "level=ERROR msg='truth check: external endpoint not ready after 3 retries' url=https://$API_HOSTNAME/ready"
+    fi
+
+    # Consistency check: if internal is ready but external is not, something is wrong
+    # (DNS/Cloudflare/TLS/nginx proxy layer)
+    if [ "$_INT_READY_OK" = "true" ] && [ "$_EXT_READY_OK" = "false" ]; then
+        _ft_log "level=ERROR msg='truth check FAILED: internal ready but external not reachable -- nginx/proxy/DNS/TLS issue' int_ok=$_INT_READY_OK ext_ok=$_EXT_READY_OK"
+        _FT_TRUTH_CHECK_PASSED=false
+    fi
+
+    # Also fail if both are down (service actually not ready)
+    if [ "$_INT_READY_OK" = "false" ] || [ "$_EXT_READY_OK" = "false" ]; then
+        if [ "$_FT_TRUTH_CHECK_PASSED" = "true" ]; then
+            _ft_log "level=ERROR msg='truth check FAILED: endpoint(s) not returning ready status' int_ok=$_INT_READY_OK ext_ok=$_EXT_READY_OK"
+            _FT_TRUTH_CHECK_PASSED=false
+        fi
+    fi
+else
+    _ft_log "level=WARN msg='truth check: curl not available, skipping endpoint checks'"
+fi
+
+if [ "$_FT_TRUTH_CHECK_PASSED" != "true" ]; then
+    _ft_state "FAILURE" "reason='post_deployment_truth_check_failed'"
+    _ft_snapshot
+    exit 2
+fi
+
+# Persist last-known-good snapshot for fast recovery triage (atomic write)
+_ft_log "msg='recording last-known-good state' slot=$INACTIVE port=$INACTIVE_PORT"
+_SNAP_TMP=$(mktemp "${SNAP_DIR}/last-good.XXXXXX")
+printf 'slot=%s port=%s ts=%s\n' "$INACTIVE" "$INACTIVE_PORT" "$(date -Iseconds)" > "$_SNAP_TMP"
+mv "$_SNAP_TMP" "$LAST_GOOD_FILE"
+_ft_log "msg='last-known-good snapshot recorded (atomic)' file=$LAST_GOOD_FILE"
+
+# Record deployment history (atomic write: temp file then mv).
+DEPLOY_HISTORY_TMP="${DEPLOY_HISTORY}.tmp.$$"
+if [ -f "$DEPLOY_HISTORY" ]; then
+    (echo "$IMAGE_SHA"; head -n $((MAX_HISTORY - 1)) "$DEPLOY_HISTORY") > "$DEPLOY_HISTORY_TMP"
+else
+    echo "$IMAGE_SHA" > "$DEPLOY_HISTORY_TMP"
+fi
+mv "$DEPLOY_HISTORY_TMP" "$DEPLOY_HISTORY"
+_ft_log "msg='deploy history updated' sha=$IMAGE_SHA"
+
+# Monitoring stack: restart only when infra configs have actually changed.
+# Hashes cover all infra config files EXCEPT the nginx template (re-rendered on
+# every deploy) to avoid spurious monitoring restarts.
 MONITORING_HASH=$(find "$REPO_DIR/infra" -readable \
     -not -path "$REPO_DIR/infra/nginx/*" \
     \( -name '*.yml' -o -name '*.yaml' -o -name '*.conf' -o -name '*.toml' -o -name '*.json' \) \
     | sort | xargs -r sha256sum 2>/dev/null | sha256sum | cut -d' ' -f1 || echo "changed")
 MONITORING_HASH_FILE="$HOME/.fieldtrack-monitoring-hash"
+
 if [ -f "$MONITORING_HASH_FILE" ] && [ "$(cat "$MONITORING_HASH_FILE")" = "$MONITORING_HASH" ]; then
-    echo "[monitoring] Configuration unchanged — skipping restart."
+    _ft_log "msg='monitoring config unchanged -- skipping restart'"
 else
-    echo "[monitoring] Configuration changed — restarting monitoring stack..."
-    # cd into infra/ so relative volume paths in docker-compose.monitoring.yml
-    # (./loki/, ./prometheus/, ./promtail/, ./grafana/) resolve to the correct
-    # infra subdirectories regardless of where this script was invoked from.
+    _ft_log "msg='monitoring config changed -- restarting monitoring stack'"
     cd "$REPO_DIR/infra"
     docker compose --env-file .env.monitoring -f docker-compose.monitoring.yml pull --quiet
     docker compose --env-file .env.monitoring -f docker-compose.monitoring.yml up -d --remove-orphans
     cd "$REPO_DIR"
     echo "$MONITORING_HASH" > "$MONITORING_HASH_FILE"
-    echo "[monitoring] Monitoring stack restarted."
+    _ft_log "msg='monitoring stack restarted'"
 fi
-
