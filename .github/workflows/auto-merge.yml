@@ -2,10 +2,11 @@ name: Auto Merge PR
 
 on:
   pull_request:
+    branches:
+      - master
     types:
       - opened
       - synchronize
-      - reopened
       - ready_for_review
 
 permissions:
@@ -81,14 +82,15 @@ jobs:
             echo "PR already ready"
           fi
 
-      - name: Merge PR
+      - name: Enable auto-merge
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           PR=${{ github.event.pull_request.number }}
-          SHA=${{ github.event.pull_request.head.sha }}
+
+          echo "Enabling auto-merge for PR #$PR"
 
           gh pr merge "$PR" \
+            --auto \
             --squash \
-            --match-head-commit "$SHA" \
             --delete-branch=false
