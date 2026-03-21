@@ -96,9 +96,17 @@ jobs:
             exit 1
           fi
 
+          mkdir -p /tmp/ssl
+          openssl req -x509 -nodes -days 1 \
+            -newkey rsa:2048 \
+            -keyout /tmp/ssl/origin.key \
+            -out /tmp/ssl/origin.crt \
+            -subj "/CN=localhost"
+
           docker run --rm \
             -v /tmp/nginx.conf:/etc/nginx/conf.d/default.conf:ro \
-            nginx:alpine nginx -T
+            -v /tmp/ssl:/etc/ssl/fieldtrack:ro \
+            nginx:alpine nginx -t
 
   production-parity:
     name: Production Parity (Full Deploy Simulation)
