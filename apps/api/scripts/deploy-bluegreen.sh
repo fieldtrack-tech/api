@@ -251,12 +251,13 @@ if [ "$CI_MODE" = "true" ]; then
     echo "CI MODE: Skipping public health check (DNS/TLS not available in CI)"
     echo "✓ Internal health check already passed in step 4"
 else
-    # Dual validation strategy:
-    #   1. Internal check (127.0.0.1:$INACTIVE_PORT/health or /ready) — already passed in step 4
-    #      This is the source of truth: container is healthy and serving traffic.
-    #   2. External check (https://$API_HOSTNAME/health) — validates edge routing
-    #      Tests TLS, DNS, nginx upstream, and firewall. Failure here triggers rollback
-    #      because the container is unreachable from the internet despite being healthy.
+    # Three-part end-to-end validation:
+    #   1. HTTP 200 from public URL — proves TLS, DNS, and Cloudflare routing work.
+    #   2. Body contains "status":"ok" — proves nginx forwarded to /health (not /)
+    #      and the request reached the correct Fastify handler.
+    #   3. Nginx port alignment — proves the slot switch actually landed. Reads the
+    #      upstream port from the live nginx config and compares against INACTIVE_PORT.
+    #      Catches partial deploys where nginx reloaded but still points at the old slot.
     #
     # Brief settle time — nginx needs a moment to apply the new upstream config
     # before forwarding connections cleanly.
@@ -264,19 +265,46 @@ else
     _PUBLIC_HEALTH_URL="https://$API_HOSTNAME/health"
     echo "  Probing: $_PUBLIC_HEALTH_URL"
     _PUBLIC_CHECK_PASSED=false
-    for _attempt in 1 2 3; do
-        if curl --max-time 10 -fsS "$_PUBLIC_HEALTH_URL" >/dev/null 2>&1; then
+    _PUBLIC_LAST_STATUS="000"
+    _PUBLIC_LAST_BODY=""
+    for _attempt in 1 2 3 4 5; do
+        _PUBLIC_LAST_BODY=$(mktemp)
+        _PUBLIC_LAST_STATUS=$(curl --max-time 10 -sS -o "$_PUBLIC_LAST_BODY" -w "%{http_code}" \
+            "$_PUBLIC_HEALTH_URL" 2>&1 || echo "000")
+        if [ "$_PUBLIC_LAST_STATUS" = "200" ] && grep -q '"status":"ok"' "$_PUBLIC_LAST_BODY" 2>/dev/null; then
             _PUBLIC_CHECK_PASSED=true
+            rm -f "$_PUBLIC_LAST_BODY"
             break
         fi
-        echo "  Attempt $_attempt/3 failed — waiting 5s..."
+        echo "  Attempt $_attempt/5 — HTTP $_PUBLIC_LAST_STATUS — waiting 5s..."
+        rm -f "$_PUBLIC_LAST_BODY"
         sleep 5
     done
 
+    # Port alignment check — nginx live config must point at the new slot's port.
+    # This catches the case where nginx reloaded but the upstream was not updated
+    # (e.g. template substitution failed silently).
+    _NGINX_ACTIVE_PORT=$(grep -oP 'server 127\.0\.0\.1:\K[0-9]+' "$NGINX_CONF" 2>/dev/null | head -1 || echo "")
+    if [ -n "$_NGINX_ACTIVE_PORT" ] && [ "$_NGINX_ACTIVE_PORT" != "$INACTIVE_PORT" ]; then
+        echo ""
+        echo "❌ NGINX PORT MISMATCH after reload:"
+        echo "   Expected nginx upstream: 127.0.0.1:$INACTIVE_PORT (new slot)"
+        echo "   Actual nginx upstream:   127.0.0.1:$_NGINX_ACTIVE_PORT"
+        echo "   Nginx did not switch to the new slot — forcing rollback."
+        _PUBLIC_CHECK_PASSED=false
+    fi
+
     if [ "$_PUBLIC_CHECK_PASSED" != "true" ]; then
+        echo ""
         echo "❌ POST-DEPLOY PUBLIC HEALTH CHECK FAILED: $_PUBLIC_HEALTH_URL"
+        echo "   Last HTTP status: $_PUBLIC_LAST_STATUS"
         echo "   Container passed internal readiness but is not reachable publicly."
-        echo "   Possible causes: TLS cert, DNS, nginx upstream config, firewall."
+        echo ""
+        echo "   Diagnostics:"
+        echo "   — DNS resolution: $(getent hosts "$API_HOSTNAME" 2>/dev/null || echo 'FAILED')"
+        echo "   — Active containers: $(docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null || echo 'unavailable')"
+        echo "   — Nginx upstream port in config: $(grep -oP 'server 127\.0\.0\.1:\K[0-9]+' "$NGINX_CONF" 2>/dev/null || echo 'unreadable')"
+        echo "   Possible causes: TLS cert, DNS, nginx upstream config, firewall, Cloudflare."
         echo ""
         echo "   Restoring previous nginx config and slot..."
         sudo cp "$NGINX_BACKUP" "$NGINX_CONF"
@@ -300,7 +328,14 @@ else
                 echo "❌ CRITICAL: ROLLBACK FAILED"
                 echo "========================================="
                 echo "Both deployment and automatic rollback have failed."
-                echo "System state: UNDEFINED"
+                echo ""
+                echo "SYSTEM STATE SNAPSHOT:"
+                echo "  Active containers:"
+                docker ps --format '  {{.Names}} → {{.Status}} ({{.Ports}})' 2>/dev/null || echo "  (docker ps failed)"
+                echo "  Active slot file: $(cat "$ACTIVE_SLOT_FILE" 2>/dev/null || echo 'MISSING')"
+                echo "  Nginx upstream port: $(grep -oP 'server 127\.0\.0\.1:\K[0-9]+' "$NGINX_CONF" 2>/dev/null || echo 'unreadable')"
+                echo "  Nginx config test: $(sudo nginx -t 2>&1)"
+                echo ""
                 echo "Manual intervention required immediately."
                 echo "========================================="
                 exit 2
@@ -310,8 +345,8 @@ else
         fi
         exit 1
     fi
-    unset _PUBLIC_HEALTH_URL _PUBLIC_CHECK_PASSED _attempt
-    echo "✓ Public health check passed."
+    unset _PUBLIC_HEALTH_URL _PUBLIC_CHECK_PASSED _attempt _PUBLIC_LAST_STATUS _PUBLIC_LAST_BODY _NGINX_ACTIVE_PORT
+    echo "✓ Public health check passed (HTTP 200, body ok, nginx port $INACTIVE_PORT confirmed)."
 fi
 
 echo "[8/8] Cleaning old container..."
