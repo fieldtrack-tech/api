@@ -34,27 +34,31 @@ jobs:
         if: github.event.pull_request.draft == true
         run: exit 0
 
-      - name: Wait until PR is mergeable
+      - name: Wait until required checks pass
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           PR=${{ github.event.pull_request.number }}
 
-          # Give GitHub time to update state
-          sleep 5
-
           for i in {1..20}; do
-            MERGEABLE=$(gh pr view "$PR" --json mergeStateStatus -q .mergeStateStatus)
+            STATUS=$(gh pr view "$PR" --json statusCheckRollup -q '
+              [.statusCheckRollup[]
+              | select(
+                  .name != "Auto Merge PR / merge" and
+                  .status == "COMPLETED"
+                )
+              | .conclusion]')
 
-            echo "Mergeable state: $MERGEABLE"
+            FAILING=$(echo "$STATUS" | grep -vc "SUCCESS" || true)
+            echo "Failing checks: $FAILING"
 
-            if [ "$MERGEABLE" = "CLEAN" ]; then
-              echo "PR is mergeable"
+            if [ "$FAILING" -eq 0 ] && [ -n "$STATUS" ]; then
+              echo "All required checks passed"
               break
             fi
 
             if [ "$i" = "20" ]; then
-              echo "PR not mergeable after timeout"
+              echo "Checks did not pass after timeout"
               exit 1
             fi
 
