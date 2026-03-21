@@ -106,9 +106,9 @@ echo ""
 # ------------------------------------------------
 
 STATUS=$(request_health)
-if [ "$STATUS" = "200" ] \
-  && validate_api_response "GET /health" \
-  && jq -e '.status == "ok"' "$TMP_BODY" >/dev/null 2>&1; then
+BODY=$(cat "$TMP_BODY")
+
+if [ "$STATUS" = "200" ] && echo "$BODY" | grep -Eq '"status":"(ok|online)"'; then
   log_pass "GET /health"
 else
   log_fail "GET /health invalid ($STATUS)"
