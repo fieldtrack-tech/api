@@ -935,7 +935,9 @@ if command -v curl >/dev/null 2>&1; then
     # Uses retry + backoff to smooth transient edge jitter
     _EXT_READY_OK=false
     _EXT_LATENCY_MS=0
-    local _slo_start _slo_end _slo_attempt=0
+    _slo_start=0
+    _slo_end=0
+    _slo_attempt=0
     for _slo_attempt in 1 2 3; do
         _slo_start=$(date +%s%3N)
         if curl -sS --max-time 3 --resolve "$API_HOSTNAME:443:127.0.0.1" "https://$API_HOSTNAME/ready" --insecure 2>/dev/null | grep -q '"status":"ready"'; then
