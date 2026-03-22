@@ -1,9 +1,9 @@
 import { z } from "zod";
 
 const EnvSchema = z.object({
-  NEXT_PUBLIC_API_URL: z.string().refine(
+  NEXT_PUBLIC_API_BASE_URL: z.string().refine(
     (v) => v.startsWith("/") || z.string().url().safeParse(v).success,
-    { message: "NEXT_PUBLIC_API_URL must be a valid URL or a root-relative path (e.g. /api/proxy)" }
+    { message: "NEXT_PUBLIC_API_BASE_URL must be a valid URL or a root-relative path (e.g. /api/proxy)" }
   ),
   NEXT_PUBLIC_SUPABASE_URL: z.string().url({ message: "NEXT_PUBLIC_SUPABASE_URL must be a valid URL" }),
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1, { message: "NEXT_PUBLIC_SUPABASE_ANON_KEY is required" }),
@@ -14,7 +14,7 @@ type Env = z.infer<typeof EnvSchema>;
 
 function parseEnv(): Env {
   const result = EnvSchema.safeParse({
-    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL,
+    NEXT_PUBLIC_API_BASE_URL: process.env.NEXT_PUBLIC_API_BASE_URL,
     NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
     NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
     NEXT_PUBLIC_MAPBOX_TOKEN: process.env.NEXT_PUBLIC_MAPBOX_TOKEN,
@@ -39,7 +39,7 @@ function parseEnv(): Env {
 
   // Return whatever we have; missing fields fall back to "" in the browser
   return (result.success ? result.data : {
-    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL ?? "",
+    NEXT_PUBLIC_API_BASE_URL: process.env.NEXT_PUBLIC_API_BASE_URL ?? "",
     NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
     NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "",
     NEXT_PUBLIC_MAPBOX_TOKEN: process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? "",

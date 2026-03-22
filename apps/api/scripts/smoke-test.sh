@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE_URL="${FT_API_BASE_URL:-https://api.getfieldtrack.app}"
+BASE_URL="${API_BASE_URL:-https://api.getfieldtrack.app}"
 API="${BASE_URL}"
 
 EMP_EMAIL="${FT_EMP_EMAIL:-}"
@@ -41,11 +41,11 @@ request() {
 
   for attempt in $(seq 1 $MAX_RETRIES); do
     if [ -n "$TOKEN" ]; then
-      STATUS=$(curl -L -s -D "$TMP_HEADERS" -o "$TMP_BODY" -w "%{http_code}" \
+      STATUS=$(curl -L -s --max-time 15 -D "$TMP_HEADERS" -o "$TMP_BODY" -w "%{http_code}" \
         -H "Authorization: Bearer $TOKEN" \
         -X "$METHOD" "$API$URL")
     else
-      STATUS=$(curl -L -s -D "$TMP_HEADERS" -o "$TMP_BODY" -w "%{http_code}" \
+      STATUS=$(curl -L -s --max-time 15 -D "$TMP_HEADERS" -o "$TMP_BODY" -w "%{http_code}" \
         -X "$METHOD" "$API$URL")
     fi
 
@@ -90,14 +90,27 @@ echo "================================"
 
 echo "Waiting for API..."
 
+HEALTH_OK=false
 for i in {1..30}; do
-  STATUS=$(curl -L -s -o /dev/null -w "%{http_code}" "$BASE_URL/health")
+  STATUS=$(curl -L -s -o /dev/null -w "%{http_code}" --max-time 5 "$BASE_URL/health" 2>/dev/null || echo "000")
   if [ "$STATUS" = "200" ]; then
-    echo "API healthy"
+    echo "API healthy (attempt $i)"
+    HEALTH_OK=true
     break
   fi
+  echo "  Waiting... attempt $i/30 (HTTP $STATUS)" >&2
   sleep 2
 done
+
+if [ "$HEALTH_OK" = "false" ]; then
+  echo "✗ API health check timed out after 30 attempts"
+  echo "  Last status: HTTP $STATUS"
+  echo "  URL: $BASE_URL/health"
+  echo ""
+  echo "Diagnostics:"
+  curl -sS -D - -o /dev/null --max-time 5 "$BASE_URL/health" 2>&1 || true
+  exit 1
+fi
 
 echo ""
 

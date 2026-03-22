@@ -161,7 +161,7 @@ export async function apiGet<T>(
 ): Promise<T> {
   const headers = await getAuthHeaders();
   const qs = params && Object.keys(params).length > 0 ? `?${new URLSearchParams(params)}` : "";
-  const response = await retryableFetch(`${env.NEXT_PUBLIC_API_URL}${path}${qs}`, {
+  const response = await retryableFetch(`${env.NEXT_PUBLIC_API_BASE_URL}${path}${qs}`, {
     method: "GET",
     headers,
   });
@@ -175,7 +175,7 @@ export async function apiGetPaginated<T>(
 ): Promise<PaginatedResponse<T>> {
   const headers = await getAuthHeaders();
   const qs = params && Object.keys(params).length > 0 ? `?${new URLSearchParams(params)}` : "";
-  const response = await retryableFetch(`${env.NEXT_PUBLIC_API_URL}${path}${qs}`, {
+  const response = await retryableFetch(`${env.NEXT_PUBLIC_API_BASE_URL}${path}${qs}`, {
     method: "GET",
     headers,
   });
@@ -186,7 +186,7 @@ export async function apiGetPaginated<T>(
 export async function apiPost<T>(path: string, body: unknown): Promise<T> {
   const headers = await getAuthHeaders();
 
-  const response = await fetchWithTimeout(`${env.NEXT_PUBLIC_API_URL}${path}`, {
+  const response = await fetchWithTimeout(`${env.NEXT_PUBLIC_API_BASE_URL}${path}`, {
     method: "POST",
     headers,
     body: JSON.stringify(body),
@@ -198,7 +198,7 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
 export async function apiPatch<T>(path: string, body: unknown): Promise<T> {
   const headers = await getAuthHeaders();
 
-  const response = await fetchWithTimeout(`${env.NEXT_PUBLIC_API_URL}${path}`, {
+  const response = await fetchWithTimeout(`${env.NEXT_PUBLIC_API_BASE_URL}${path}`, {
     method: "PATCH",
     headers,
     body: JSON.stringify(body),

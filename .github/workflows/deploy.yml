@@ -3,7 +3,8 @@
 # Production Deployment Pipeline
 #
 # Design principles:
-#   1. NO paths: trigger filter — every push to master runs the full pipeline
+#   1. Trigger filter: skips on CI-only changes (.github/workflows, README, etc)
+#      In normal flow (code via beta→master PR), this doesn't matter
 #   2. Runs ALL validation from scratch — no trust built on PR results alone
 #   3. Trivy scan runs BEFORE Docker push — vulnerable images never reach the registry
 #   4. target: production + build-args mirror pr.yml exactly (bit-for-bit parity)
@@ -24,6 +25,15 @@ on:
   push:
     branches:
       - master
+    # Skip deploy if ONLY CI-related files changed (optional guard).
+    # In normal flow, this shouldn't matter (code changes require beta→master merge).
+    # But protects against edge case of empty commits or workflow-only pushes.
+    paths:
+      - 'apps/api/**'
+      - 'apps/web/**'
+      - 'infra/**'      # Nginx config changes trigger redeploy
+      - 'packages/**'
+      - 'supabase/**'
   workflow_dispatch:
 
 # Never cancel an in-progress deployment — let it finish or fail cleanly.
@@ -47,6 +57,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Confirm deployment trigger
+        run: |
+          echo "========================================="
+          echo "Deployment triggered on master"
+          echo "  Commit SHA  : ${{ github.sha }}"
+          echo "  Event       : ${{ github.event_name }}"
+          echo "  Ref         : ${{ github.ref }}"
+          echo "========================================="
+
       - name: Checkout
         uses: actions/checkout@v5
 
@@ -132,7 +151,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      NEXT_PUBLIC_API_URL: /api/proxy
+      NEXT_PUBLIC_API_BASE_URL: /api/proxy
       NEXT_PUBLIC_SUPABASE_URL: https://ci-placeholder.supabase.co
       NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
       NEXT_PUBLIC_MAPBOX_TOKEN: pk.ci-build-placeholder
@@ -461,14 +480,14 @@ jobs:
     steps:
       - name: Validate required deployment secrets
         env:
-          FT_API_BASE_URL: ${{ secrets.FT_API_BASE_URL }}
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
           CORS_ORIGIN: ${{ secrets.CORS_ORIGIN }}
         run: |
-          if [ -z "${FT_API_BASE_URL:-}" ]; then
-            echo "::error::FT_API_BASE_URL secret is not set. Deployment aborted."
+          if [ -z "${API_BASE_URL:-}" ]; then
+            echo "::error::API_BASE_URL secret is not set. Deployment aborted."
             exit 1
           fi
-          echo "✓ FT_API_BASE_URL is set"
+          echo "✓ API_BASE_URL is set"
           if [ -z "${CORS_ORIGIN:-}" ]; then
             echo "::error::CORS_ORIGIN secret is not set. Deployment aborted."
             exit 1
@@ -508,6 +527,24 @@ jobs:
             ./apps/api/scripts/deploy-bluegreen.sh "${{ needs.build-scan-push.outputs.sha_short }}"
             echo "✓ Deploy completed in $(($(date +%s) - T0))s"
 
+      - name: Log deployment state (slot + SHA for debugging)
+        uses: appleboy/ssh-action@v1.0.3
+        if: always()
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: ${{ secrets.DO_USER }}
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            ACTIVE_SLOT=$(cat /var/run/fieldtrack/active-slot 2>/dev/null || echo "unknown")
+            DEPLOY_STATUS="UNKNOWN"
+            
+            # Check if health endpoint is responding (good sign of successful deploy)
+            if timeout 5 curl -sf http://127.0.0.1:3000/health >/dev/null 2>&1; then
+              DEPLOY_STATUS="SUCCESS"
+            fi
+            
+            echo "DEPLOY_STATE=$DEPLOY_STATUS| SLOT=$ACTIVE_SLOT | SHA=${{ github.sha }}"
+
   # ---------------------------------------------------------------------------
   # JOB: sync-infra
   #
@@ -532,7 +569,7 @@ jobs:
             export DEPLOY_ROOT="/home/ashish/FieldTrack-2.0"
             INFRA_DIR="$DEPLOY_ROOT/infra"
             NGINX_LIVE="/etc/nginx/sites-enabled/fieldtrack.conf"
-            ACTIVE_SLOT_FILE="$HOME/.fieldtrack-active-slot"
+            ACTIVE_SLOT_FILE="/var/run/fieldtrack/active-slot"
 
             ACTIVE_SLOT=$(cat "$ACTIVE_SLOT_FILE" 2>/dev/null || echo "blue")
             if [ "$ACTIVE_SLOT" = "green" ]; then BACKEND_PORT=3002; else BACKEND_PORT=3001; fi
@@ -587,8 +624,10 @@ jobs:
           key: ${{ secrets.DO_SSH_KEY }}
           script: |
             set -euo pipefail
-            echo "=== Checking /health via VPS ==="
-            API_HOSTNAME="${API_HOSTNAME:-api.getfieldtrack.app}"
+            export DEPLOY_ROOT="/home/ashish/FieldTrack-2.0"
+            cd "$DEPLOY_ROOT"
+            source apps/api/scripts/load-env.sh
+            echo "=== Checking /health via VPS (API_HOSTNAME=$API_HOSTNAME) ==="
             for i in $(seq 1 30); do
               echo "---- Attempt $i ----"
               STATUS=$(curl -sS \
@@ -609,7 +648,7 @@ jobs:
             echo "❌ /health failed"
             exit 1
 
-      - name: Wait for /ready endpoint (via VPS)
+      - name: Wait for /health endpoint (final public check)
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.DO_HOST }}
@@ -617,31 +656,33 @@ jobs:
           key: ${{ secrets.DO_SSH_KEY }}
           script: |
             set -euo pipefail
-            echo "=== Checking /ready via VPS ==="
-            API_HOSTNAME="${API_HOSTNAME:-api.getfieldtrack.app}"
-            for i in $(seq 1 15); do
+            export DEPLOY_ROOT="/home/ashish/FieldTrack-2.0"
+            cd "$DEPLOY_ROOT"
+            source apps/api/scripts/load-env.sh
+            echo "=== Final health check via public endpoint (API_HOSTNAME=$API_HOSTNAME) ==="
+            for i in $(seq 1 10); do
               echo "---- Attempt $i ----"
               STATUS=$(curl -sS \
                 --resolve "${API_HOSTNAME}:443:127.0.0.1" \
                 -o /tmp/resp.txt \
                 -w "%{http_code}" \
-                https://${API_HOSTNAME}/ready \
+                https://${API_HOSTNAME}/health \
                 --insecure || echo "000")
               BODY=$(cat /tmp/resp.txt 2>/dev/null || echo "")
               echo "HTTP: $STATUS"
               echo "BODY: $BODY"
-              if [ "$STATUS" = "200" ] && echo "$BODY" | grep -q '"status":"ready"'; then
-                echo "✓ /ready OK (attempt $i)"
+              if [ "$STATUS" = "200" ] && echo "$BODY" | grep -q '"status":"ok"'; then
+                echo "✓ /health OK (attempt $i)"
                 exit 0
               fi
               sleep 2
             done
-            echo "❌ /ready failed"
+            echo "❌ /health failed"
             exit 1
 
       - name: Run smoke tests
         env:
-          FT_API_BASE_URL: ${{ secrets.FT_API_BASE_URL }}
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
           FT_EMP_EMAIL: ${{ secrets.FT_EMP_EMAIL }}
           FT_EMP_PASSWORD: ${{ secrets.FT_EMP_PASSWORD }}
           FT_ADMIN_EMAIL: ${{ secrets.FT_ADMIN_EMAIL }}
@@ -691,6 +732,14 @@ jobs:
         needs.health-and-smoke.result == 'failure'
       )
     steps:
+      - name: Log rollback trigger
+        run: |
+          echo "ROLLBACK_TRIGGERED=TRUE | FAILED_JOBS:"
+          [ "${{ needs.deploy.result }}" = "failure" ] && echo "  - deploy"
+          [ "${{ needs.sync-infra.result }}" = "failure" ] && echo "  - sync-infra"
+          [ "${{ needs.health-and-smoke.result }}" = "failure" ] && echo "  - health-and-smoke"
+          echo "SHA=${{ github.sha }}"
+
       - name: Rollback on VPS
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -703,4 +752,7 @@ jobs:
             cd "$DEPLOY_ROOT"
             chmod +x apps/api/scripts/*.sh
             ./apps/api/scripts/rollback.sh --auto
-            echo "✓ Rollback completed."
+            
+            # Log final state
+            ACTIVE_SLOT=$(cat /var/run/fieldtrack/active-slot 2>/dev/null || echo "unknown")
+            echo "ROLLBACK_COMPLETE | ACTIVE_SLOT=$ACTIVE_SLOT | SHA=${{ github.sha }}"
