@@ -83,6 +83,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: detect-changes
     if: always()
+    env:
+      NEXT_PUBLIC_API_BASE_URL: /api/proxy
+      NEXT_PUBLIC_SUPABASE_URL: https://ci-placeholder.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
+      NEXT_PUBLIC_MAPBOX_TOKEN: pk.ci-build-placeholder
     steps:
       - name: Skip if no frontend changes
         if: needs.detect-changes.outputs.frontend != 'true'

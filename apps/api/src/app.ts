@@ -42,8 +42,8 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // Log startup configuration for instant debugging
   app.log.info({
-    apiBaseUrl: process.env.API_BASE_URL,
-    apiHostname: process.env.API_BASE_URL ? new URL(process.env.API_BASE_URL).host : undefined,
+    apiBaseUrl: env.API_BASE_URL ?? "(unset)",
+    apiHostname: env.API_BASE_URL ? new URL(env.API_BASE_URL).host : undefined,
     skipExternal: skipExternalServices,
   }, "startup:config");
 

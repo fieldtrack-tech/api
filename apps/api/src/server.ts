@@ -43,7 +43,7 @@ async function start(): Promise<void> {
         shouldStartWorkers: shouldStartWorkersNow,
         CI_MODE: process.env.CI_MODE,
         SKIP_EXTERNAL_SERVICES: process.env.SKIP_EXTERNAL_SERVICES,
-        NODE_ENV: process.env.NODE_ENV,
+        NODE_ENV: env.NODE_ENV,
       },
       "[BOOT] worker startup decision",
     );
@@ -65,8 +65,8 @@ async function start(): Promise<void> {
           skipExternalServices: process.env.SKIP_EXTERNAL_SERVICES,
           ciMode: process.env.CI_MODE,
           ci: process.env.CI,
-          nodeEnv: process.env.NODE_ENV,
-          appEnv: process.env.APP_ENV,
+          nodeEnv: env.NODE_ENV,
+          appEnv: env.APP_ENV,
         },
         "Background workers and recovery are disabled in this runtime mode",
       );

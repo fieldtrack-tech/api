@@ -6,7 +6,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspace packages/types && npm run build --workspace apps/api && npm run build --workspace apps/web",
+    "build": "npm run build --workspace packages/types && npm run build --workspace packages/config && npm run build --workspace apps/api && npm run build --workspace apps/web",
     "dev:api": "npm --workspace apps/api run dev",
     "dev:web": "npm --workspace apps/web run dev",
     "dev": "concurrently \"npm run dev:api\" \"npm run dev:web\"",

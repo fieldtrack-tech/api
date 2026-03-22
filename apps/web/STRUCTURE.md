@@ -166,7 +166,7 @@ Domain-specific components organized by feature:
 ## Environment Variables
 
 Required environment variables (see `.env.example`):
-- `NEXT_PUBLIC_API_URL`: Backend API URL
+- `NEXT_PUBLIC_API_BASE_URL`: Backend API URL
 - `NEXT_PUBLIC_SUPABASE_URL`: Supabase project URL
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`: Supabase anonymous key
 

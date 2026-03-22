@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
 
-// NEXT_PUBLIC_API_URL is the single source of truth for the backend API location.
+// NEXT_PUBLIC_API_BASE_URL is the single source of truth for the backend API location.
 //
 // Valid values:
 //   Full URL  → https://api.example.com
@@ -11,12 +11,12 @@
 //               Used in CI placeholder builds or self-hosted setups.
 //               Rewrite is skipped when the value is a relative path to prevent
 //               an infinite routing loop (/api/proxy → /api/proxy → …).
-const NEXT_PUBLIC_API_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
-const apiIsFullUrl = /^https?:\/\//.test(NEXT_PUBLIC_API_URL);
+const NEXT_PUBLIC_API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
+const apiIsFullUrl = /^https?:\/\//.test(NEXT_PUBLIC_API_BASE_URL);
 
 // Extract scheme+host only (strip any path) for use in CSP and rewrite destination.
 // Empty string when the env var is a relative path — 'self' in CSP covers same-origin.
-const apiOrigin = apiIsFullUrl ? new URL(NEXT_PUBLIC_API_URL).origin : "";
+const apiOrigin = apiIsFullUrl ? new URL(NEXT_PUBLIC_API_BASE_URL).origin : "";
 
 const nextConfig = {
   transpilePackages: ["mapbox-gl", "@fieldtrack/types"],
@@ -70,7 +70,7 @@ const nextConfig = {
     ];
   },
   async rewrites() {
-    // Configure the server-side proxy only when NEXT_PUBLIC_API_URL is a full URL.
+    // Configure the server-side proxy only when NEXT_PUBLIC_API_BASE_URL is a full URL.
     // Skipping for relative paths avoids an infinite routing loop.
     if (!apiIsFullUrl) return [];
     return [

@@ -132,7 +132,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      NEXT_PUBLIC_API_URL: /api/proxy
+      NEXT_PUBLIC_API_BASE_URL: /api/proxy
       NEXT_PUBLIC_SUPABASE_URL: https://ci-placeholder.supabase.co
       NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
       NEXT_PUBLIC_MAPBOX_TOKEN: pk.ci-build-placeholder
@@ -461,14 +461,14 @@ jobs:
     steps:
       - name: Validate required deployment secrets
         env:
-          FT_API_BASE_URL: ${{ secrets.FT_API_BASE_URL }}
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
           CORS_ORIGIN: ${{ secrets.CORS_ORIGIN }}
         run: |
-          if [ -z "${FT_API_BASE_URL:-}" ]; then
-            echo "::error::FT_API_BASE_URL secret is not set. Deployment aborted."
+          if [ -z "${API_BASE_URL:-}" ]; then
+            echo "::error::API_BASE_URL secret is not set. Deployment aborted."
             exit 1
           fi
-          echo "✓ FT_API_BASE_URL is set"
+          echo "✓ API_BASE_URL is set"
           if [ -z "${CORS_ORIGIN:-}" ]; then
             echo "::error::CORS_ORIGIN secret is not set. Deployment aborted."
             exit 1
@@ -532,7 +532,7 @@ jobs:
             export DEPLOY_ROOT="/home/ashish/FieldTrack-2.0"
             INFRA_DIR="$DEPLOY_ROOT/infra"
             NGINX_LIVE="/etc/nginx/sites-enabled/fieldtrack.conf"
-            ACTIVE_SLOT_FILE="$HOME/.fieldtrack-active-slot"
+            ACTIVE_SLOT_FILE="/var/run/fieldtrack/active-slot"
 
             ACTIVE_SLOT=$(cat "$ACTIVE_SLOT_FILE" 2>/dev/null || echo "blue")
             if [ "$ACTIVE_SLOT" = "green" ]; then BACKEND_PORT=3002; else BACKEND_PORT=3001; fi
@@ -587,8 +587,10 @@ jobs:
           key: ${{ secrets.DO_SSH_KEY }}
           script: |
             set -euo pipefail
-            echo "=== Checking /health via VPS ==="
-            API_HOSTNAME="${API_HOSTNAME:-api.getfieldtrack.app}"
+            export DEPLOY_ROOT="/home/ashish/FieldTrack-2.0"
+            cd "$DEPLOY_ROOT"
+            source apps/api/scripts/load-env.sh
+            echo "=== Checking /health via VPS (API_HOSTNAME=$API_HOSTNAME) ==="
             for i in $(seq 1 30); do
               echo "---- Attempt $i ----"
               STATUS=$(curl -sS \
@@ -609,7 +611,7 @@ jobs:
             echo "❌ /health failed"
             exit 1
 
-      - name: Wait for /ready endpoint (via VPS)
+      - name: Wait for /health endpoint (final public check)
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.DO_HOST }}
@@ -617,31 +619,33 @@ jobs:
           key: ${{ secrets.DO_SSH_KEY }}
           script: |
             set -euo pipefail
-            echo "=== Checking /ready via VPS ==="
-            API_HOSTNAME="${API_HOSTNAME:-api.getfieldtrack.app}"
-            for i in $(seq 1 15); do
+            export DEPLOY_ROOT="/home/ashish/FieldTrack-2.0"
+            cd "$DEPLOY_ROOT"
+            source apps/api/scripts/load-env.sh
+            echo "=== Final health check via public endpoint (API_HOSTNAME=$API_HOSTNAME) ==="
+            for i in $(seq 1 10); do
               echo "---- Attempt $i ----"
               STATUS=$(curl -sS \
                 --resolve "${API_HOSTNAME}:443:127.0.0.1" \
                 -o /tmp/resp.txt \
                 -w "%{http_code}" \
-                https://${API_HOSTNAME}/ready \
+                https://${API_HOSTNAME}/health \
                 --insecure || echo "000")
               BODY=$(cat /tmp/resp.txt 2>/dev/null || echo "")
               echo "HTTP: $STATUS"
               echo "BODY: $BODY"
-              if [ "$STATUS" = "200" ] && echo "$BODY" | grep -q '"status":"ready"'; then
-                echo "✓ /ready OK (attempt $i)"
+              if [ "$STATUS" = "200" ] && echo "$BODY" | grep -q '"status":"ok"'; then
+                echo "✓ /health OK (attempt $i)"
                 exit 0
               fi
               sleep 2
             done
-            echo "❌ /ready failed"
+            echo "❌ /health failed"
             exit 1
 
       - name: Run smoke tests
         env:
-          FT_API_BASE_URL: ${{ secrets.FT_API_BASE_URL }}
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
           FT_EMP_EMAIL: ${{ secrets.FT_EMP_EMAIL }}
           FT_EMP_PASSWORD: ${{ secrets.FT_EMP_PASSWORD }}
           FT_ADMIN_EMAIL: ${{ secrets.FT_ADMIN_EMAIL }}

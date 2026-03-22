@@ -248,9 +248,9 @@ _ft_check_external_ready() {
         local body
         body=$(curl -sS --max-time 3 \
             --resolve "$API_HOSTNAME:443:127.0.0.1" \
-            "https://$API_HOSTNAME/ready" \
+            "https://$API_HOSTNAME/health" \
             --insecure 2>/dev/null || echo "")
-        if echo "$body" | grep -q '"status":"ready"' 2>/dev/null; then
+        if echo "$body" | grep -q '"status":"ok"' 2>/dev/null; then
             set -x
             return 0
         fi

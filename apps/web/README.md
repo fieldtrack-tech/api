@@ -32,7 +32,7 @@ The app will be available at `http://localhost:3000`.
 
 Required environment variables (see `.env.example`):
 
-- `NEXT_PUBLIC_API_URL`: Backend API URL
+- `NEXT_PUBLIC_API_BASE_URL`: Backend API URL
   - Development: `http://localhost:3001`
   - Production: `https://api.fieldtrack.meowsician.tech`
 - `NEXT_PUBLIC_SUPABASE_URL`: Supabase project URL
@@ -81,7 +81,7 @@ The frontend communicates with the backend API using environment-based configura
 - **Local Development**: Direct connection to `http://localhost:3001`
 - **Production**: Uses Next.js API proxy (`/api/proxy/*`) to avoid CORS issues
 
-The API client (`src/lib/api/client.ts`) automatically uses the `NEXT_PUBLIC_API_URL` environment variable.
+The API client (`src/lib/api/client.ts`) automatically uses the `NEXT_PUBLIC_API_BASE_URL` environment variable.
 
 ## Deployment
 
@@ -92,13 +92,13 @@ The frontend is deployed to Vercel with automatic deployments on push to `master
 Set these in your Vercel project settings:
 
 ```bash
-NEXT_PUBLIC_API_URL=/api/proxy
+NEXT_PUBLIC_API_BASE_URL=/api/proxy
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 NEXT_PUBLIC_MAPBOX_TOKEN=your-mapbox-token
 ```
 
-Note: In production, `NEXT_PUBLIC_API_URL` should be set to `/api/proxy` to use the Next.js server-side proxy, which avoids CORS preflight requests.
+Note: In production, `NEXT_PUBLIC_API_BASE_URL` should be set to `/api/proxy` to use the Next.js server-side proxy, which avoids CORS preflight requests.
 
 ## Features
 
