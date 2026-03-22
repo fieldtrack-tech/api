@@ -1,6 +1,6 @@
 name: Auto PR (beta → master)
 # Creates or updates the release PR from beta to master.
-# Auto-merge is handled by GitHub natively (repo settings) — not by this workflow.
+# Enables auto-merge so GitHub merges the PR when all checks pass.
 
 on:
   push:
@@ -120,3 +120,28 @@ jobs:
           else
             echo "No changes in PR body"
           fi
+
+      - name: Enable auto-merge
+        env:
+          GH_TOKEN: ${{ secrets.FIELDTRACK_PAT }}
+        run: |
+          PR=$(gh pr list \
+            --base master \
+            --head beta \
+            --state open \
+            --json number \
+            --jq '.[0].number // ""')
+
+          if [ -z "$PR" ]; then
+            echo "⚠️  No PR found, auto-merge not enabled"
+            exit 0
+          fi
+
+          echo "Enabling auto-merge for PR #$PR"
+
+          gh pr merge "$PR" \
+            --auto \
+            --squash \
+            --delete-branch=false || true
+
+          echo "✓ Auto-merge enabled"
