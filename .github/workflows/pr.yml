@@ -4,7 +4,6 @@ on:
   pull_request:
     branches:
       - master
-      - main
 
 concurrency:
   group: pr-${{ github.event.pull_request.number }}
