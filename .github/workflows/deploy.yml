@@ -3,8 +3,7 @@
 # Production Deployment Pipeline
 #
 # Design principles:
-#   1. Trigger filter: skips on CI-only changes (.github/workflows, README, etc)
-#      In normal flow (code via beta→master PR), this doesn't matter
+#   1. Triggers on every push to master (no paths filter — ensures sync-beta always runs)
 #   2. Runs ALL validation from scratch — no trust built on PR results alone
 #   3. Trivy scan runs BEFORE Docker push — vulnerable images never reach the registry
 #   4. target: production + build-args mirror pr.yml exactly (bit-for-bit parity)
@@ -25,15 +24,6 @@ on:
   push:
     branches:
       - master
-    # Skip deploy if ONLY CI-related files changed (optional guard).
-    # In normal flow, this shouldn't matter (code changes require beta→master merge).
-    # But protects against edge case of empty commits or workflow-only pushes.
-    paths:
-      - 'apps/api/**'
-      - 'apps/web/**'
-      - 'infra/**'      # Nginx config changes trigger redeploy
-      - 'packages/**'
-      - 'supabase/**'
   workflow_dispatch:
 
 # Never cancel an in-progress deployment — let it finish or fail cleanly.
