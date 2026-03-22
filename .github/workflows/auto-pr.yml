@@ -159,11 +159,16 @@ jobs:
           echo "pr=$NEW_PR" >> $GITHUB_OUTPUT
 
       - name: Update PR summary (poll until queryable)
-        if: steps.check.outputs.pr != 'none' && steps.summary.outputs.empty != 'true'
+        if: (steps.check.outputs.pr != 'none' || steps.create.outputs.pr != '') && steps.summary.outputs.empty != 'true'
         env:
           GH_TOKEN: ${{ secrets.FIELDTRACK_PAT }}
         run: |
-          PR=${{ steps.check.outputs.pr }}
+          # Use created PR if available, otherwise use checked PR
+          if [ -n "${{ steps.create.outputs.pr }}" ]; then
+            PR=${{ steps.create.outputs.pr }}
+          else
+            PR=${{ steps.check.outputs.pr }}
+          fi
 
           # Poll until PR is queryable (deterministic > fixed sleep)
           for i in {1..5}; do
