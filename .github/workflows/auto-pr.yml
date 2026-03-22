@@ -105,7 +105,7 @@ jobs:
           printf "%s\n" "$COMMITS" > commits.txt
 
       - name: Create PR if not exists
-        if: steps.check.outputs.pr == 'none' && steps.summary.outputs.empty != 'true'
+        if: steps.summary.outputs.empty == 'false'
         id: create
         env:
           GH_TOKEN: ${{ secrets.FIELDTRACK_PAT }}
@@ -159,15 +159,21 @@ jobs:
           echo "pr=$NEW_PR" >> $GITHUB_OUTPUT
 
       - name: Update PR summary (poll until queryable)
-        if: (steps.check.outputs.pr != 'none' || steps.create.outputs.pr != '') && steps.summary.outputs.empty != 'true'
+        if: steps.summary.outputs.empty == 'false'
         env:
           GH_TOKEN: ${{ secrets.FIELDTRACK_PAT }}
         run: |
-          # Use created PR if available, otherwise use checked PR
-          if [ -n "${{ steps.create.outputs.pr }}" ]; then
-            PR=${{ steps.create.outputs.pr }}
-          else
-            PR=${{ steps.check.outputs.pr }}
+          # Query the authoritative PR number
+          PR=$(gh pr list \
+            --base master \
+            --head beta \
+            --state open \
+            --json number \
+            --jq '.[0].number // "none"')
+
+          if [ "$PR" = "none" ] || [ -z "$PR" ]; then
+            echo "No open PR found, skipping summary update"
+            exit 0
           fi
 
           # Poll until PR is queryable (deterministic > fixed sleep)
@@ -200,7 +206,7 @@ jobs:
           gh pr edit "$PR" --body-file final_body.txt
 
       - name: Ensure PR is mergeable (rebase if needed + pre-sync)
-        if: steps.summary.outputs.empty != 'true'
+        if: steps.summary.outputs.empty == 'false'
         env:
           GH_TOKEN: ${{ secrets.FIELDTRACK_PAT }}
         run: |
@@ -298,7 +304,7 @@ jobs:
           fi
 
       - name: Enable auto-merge (poll + verify idempotency)
-        if: steps.summary.outputs.empty != 'true'
+        if: steps.summary.outputs.empty == 'false'
         env:
           GH_TOKEN: ${{ secrets.FIELDTRACK_PAT }}
         run: |
@@ -370,7 +376,7 @@ jobs:
           fi
 
       - name: Debug PR state
-        if: steps.summary.outputs.empty != 'true'
+        if: steps.summary.outputs.empty == 'false'
         env:
           GH_TOKEN: ${{ secrets.FIELDTRACK_PAT }}
         run: |
