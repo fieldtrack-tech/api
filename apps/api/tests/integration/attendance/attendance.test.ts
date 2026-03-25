@@ -161,7 +161,7 @@ describe("Attendance Integration Tests", () => {
       });
       expect(res.statusCode).toBe(403);
       const body = JSON.parse(res.body) as { success: false; error: string };
-      expect(body.error).toMatch(/admin users cannot check in/i);
+      expect(body.error).toMatch(/requires employee role/i);
     });
 
     it("returns 404 when employee is not in the organization", async () => {
@@ -241,7 +241,7 @@ describe("Attendance Integration Tests", () => {
       });
       expect(res.statusCode).toBe(403);
       const body = JSON.parse(res.body) as { success: false; error: string };
-      expect(body.error).toMatch(/admin users cannot check out/i);
+      expect(body.error).toMatch(/requires employee role/i);
     });
   });
 
