@@ -39,27 +39,33 @@ const getKey = (header: any, callback: any): void => {
 /**
  * Supabase JWT payload structure.
  *
- * IMPORTANT — claim ownership:
- *   app_metadata  — written by the Supabase service role / custom_access_token_hook only.
- *                   Users cannot modify it. Use this for authorization-sensitive values.
- *   user_metadata — user-controlled via supabase.auth.updateUser(). Never use for authz.
+ * IMPORTANT — claim sources after custom_access_token_hook runs:
  *
- * The application role (ADMIN / EMPLOYEE) is embedded in app_metadata by the
- * custom_access_token_hook which reads the authoritative value from public.users.role.
+ *   role        — Supabase built-in; overridden to "ADMIN" or "EMPLOYEE" by the
+ *                 hook reading public.users.role. Without the hook it is "authenticated".
+ *   org_id      — Injected by hook from public.users.organization_id.
+ *   employee_id — Injected by hook from public.employees.id (EMPLOYEE role only).
+ *
+ *   user_metadata — user-controlled via supabase.auth.updateUser().
+ *                   NEVER use for authorization decisions.
  */
 export interface SupabaseJwtPayload extends JoseJwtPayload {
   sub: string;
   email?: string;
-  aud?: string; // Token audience — must be "authenticated" for user tokens
-  role?: string; // Supabase built-in claim — always "authenticated", NOT the app role
+  aud?: string;         // Token audience — must be "authenticated" for user tokens
+  role?: string;        // Overridden by hook: "ADMIN" | "EMPLOYEE". Without hook: "authenticated".
+  org_id?: string;      // Injected by custom_access_token_hook (organization UUID)
+  employee_id?: string; // Injected by custom_access_token_hook (EMPLOYEE role only)
+  // Legacy claim location used by Phase 5 hook (app_metadata.*)
+  // Kept for backward compatibility during token-rotation window.
   app_metadata?: {
-    provider?: string;
-    organization_id?: string; // embedded by custom_access_token_hook
-    employee_id?: string;     // embedded by custom_access_token_hook
-    role?: string;            // application role: ADMIN or EMPLOYEE (server-controlled)
+    role?: string;            // legacy: application role
+    organization_id?: string; // legacy: org UUID
+    employee_id?: string;     // legacy: employee UUID
+    [key: string]: unknown;
   };
   user_metadata?: {
-    [key: string]: unknown;   // user-controlled — do NOT use for authorization decisions
+    [key: string]: unknown; // user-controlled — do NOT use for authorization decisions
   };
 }
 

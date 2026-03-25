@@ -21,10 +21,12 @@ export type UserRole = (typeof ROLES)[number];
 
 /**
  * Strict schema for validating decoded JWT payloads.
- * Every request must carry a valid sub, role (from user_metadata), and organization_id.
+ * Every request must carry a valid sub, role, and organization_id.
  *
- * Phase 20: role is extracted from user_metadata.role (not the top-level role
- * claim, which is always "authenticated" for Supabase user tokens).
+ * Phase 28: role is extracted from the top-level 'role' claim (overridden
+ * from "authenticated" to "ADMIN"/"EMPLOYEE" by custom_access_token_hook).
+ * organization_id is mapped from the hook-injected 'org_id' claim.
+ * Tokens that lack these claims indicate the hook is not enabled.
  */
 export const jwtPayloadSchema = z.object({
     sub: z.string().min(1, "JWT 'sub' claim is required"),

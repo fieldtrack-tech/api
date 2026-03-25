@@ -17,6 +17,144 @@ FAIL=0
 TMP_HEADERS=$(mktemp)
 TMP_BODY=$(mktemp)
 
+# ----------------------------------------------------------------
+# Decode the payload section of a JWT (base64url → JSON string).
+# Usage: decode_jwt_payload <token>
+# ----------------------------------------------------------------
+decode_jwt_payload() {
+  local token=$1
+  local payload
+  payload=$(echo "$token" | cut -d'.' -f2)
+  # Restore standard base64 alphabet and add required padding
+  local mod=$(( ${#payload} % 4 ))
+  case $mod in
+    2) payload="${payload}==" ;;
+    3) payload="${payload}=" ;;
+  esac
+  echo "$payload" | tr '_-' '/+' | base64 -d 2>/dev/null
+}
+
+# ----------------------------------------------------------------
+# Assert that a JWT contains the required hook-injected claims.
+# Exits with code 1 if any required claim is missing.
+# Usage: assert_hook_claims <label> <token> <require_employee_id>
+# ----------------------------------------------------------------
+assert_hook_claims() {
+  local label="$1"
+  local token="$2"
+  local require_employee_id="${3:-false}"
+
+  local payload
+  payload=$(decode_jwt_payload "$token")
+
+  echo ""
+  echo "Decoded JWT payload ($label):"
+  echo "$payload" | jq '.' 2>/dev/null || echo "$payload"
+
+  local role org_id employee_id
+  role=$(echo "$payload"        | jq -r '.role        // empty' 2>/dev/null)
+  org_id=$(echo "$payload"      | jq -r '.org_id      // empty' 2>/dev/null)
+  employee_id=$(echo "$payload" | jq -r '.employee_id // empty' 2>/dev/null)
+
+  local hook_ok=true
+
+  if [ -z "$role" ] || [ -z "$org_id" ]; then
+    echo "✗ Auth Hook Integrity ($label): JWT is missing required claims"
+    echo "  role   = '${role:-<MISSING>}'"
+    echo "  org_id = '${org_id:-<MISSING>}'"
+    echo ""
+    echo "  ╔══════════════════════════════════════════════════════════╗"
+    echo "  ║  Supabase Auth Hook is NOT injecting claims.            ║"
+    echo "  ║  All API calls will fail with 401.                      ║"
+    echo "  ║                                                          ║"
+    echo "  ║  ACTION: Supabase Dashboard → Authentication → Hooks    ║"
+    echo "  ║  Enable: Customize Access Token (JWT) Claims            ║"
+    echo "  ║  Hook type: Postgres                                     ║"
+    echo "  ║  Schema:    public                                       ║"
+    echo "  ║  Function:  custom_access_token_hook                    ║"
+    echo "  ╚══════════════════════════════════════════════════════════╝"
+    FAIL=$((FAIL+1))
+    hook_ok=false
+  fi
+
+  if [ "$require_employee_id" = "true" ] && [ -z "$employee_id" ]; then
+    echo "✗ Auth Hook Integrity ($label): JWT missing employee_id claim"
+    echo "  This user may not have an employee record in public.employees."
+    echo "  Verify seed data: the test employee user must exist in both"
+    echo "  auth.users AND public.users AND public.employees."
+    FAIL=$((FAIL+1))
+    hook_ok=false
+  fi
+
+  if [ "$hook_ok" = "true" ]; then
+    local emp_part=""
+    if [ -n "$employee_id" ]; then
+      emp_part=", employee_id=${employee_id:0:8}..."
+    fi
+    log_pass "Auth Hook Integrity ($label): role=$role, org_id=${org_id:0:8}...${emp_part}"
+  fi
+
+  # Fail fast — if hook claims are missing, API calls will all 401.
+  # No point running the rest of the smoke suite.
+  if [ "$hook_ok" = "false" ]; then
+    echo ""
+    echo "⛔ Aborting smoke test: JWT claims missing. Fix auth hook first."
+    exit 1
+  fi
+}
+
+# ----------------------------------------------------------------
+# Login to Supabase and return a guaranteed-fresh access_token via
+# password login → immediate token refresh.
+#
+# WHY:  Supabase may return a cached access_token for recent logins.
+#       Forcing a refresh guarantees the Hook runs on the new token
+#       so custom claims (role, org_id, employee_id) are present.
+#
+# Usage: login_and_refresh <email> <password>
+# Outputs:  access_token string to stdout; exits 1 on failure.
+# ----------------------------------------------------------------
+login_and_refresh() {
+  local email="$1"
+  local password="$2"
+
+  # Step 1: Password login — get access_token + refresh_token
+  local auth_response
+  auth_response=$(curl -s -X POST \
+    -H "apikey: $SUPABASE_ANON" \
+    -H "Content-Type: application/json" \
+    -d "{\"email\":\"$email\",\"password\":\"$password\"}" \
+    "$SUPABASE_URL/auth/v1/token?grant_type=password")
+
+  local refresh_token
+  refresh_token=$(echo "$auth_response" | jq -r '.refresh_token // empty')
+
+  if [ -z "$refresh_token" ] || [ "$refresh_token" = "null" ]; then
+    echo "  ERROR: password login failed for $email" >&2
+    echo "  Response: $auth_response" >&2
+    return 1
+  fi
+
+  # Step 2: Force-refresh — guarantees Hook runs on the new token
+  local refresh_response
+  refresh_response=$(curl -s -X POST \
+    -H "apikey: $SUPABASE_ANON" \
+    -H "Content-Type: application/json" \
+    -d "{\"refresh_token\":\"$refresh_token\"}" \
+    "$SUPABASE_URL/auth/v1/token?grant_type=refresh_token")
+
+  local access_token
+  access_token=$(echo "$refresh_response" | jq -r '.access_token // empty')
+
+  if [ -z "$access_token" ] || [ "$access_token" = "null" ]; then
+    echo "  ERROR: token refresh failed for $email" >&2
+    echo "  Response: $refresh_response" >&2
+    return 1
+  fi
+
+  echo "$access_token"
+}
+
 cleanup() {
   rm -f "$TMP_HEADERS" "$TMP_BODY"
 }
@@ -184,22 +322,24 @@ else
 fi
 
 # ------------------------------------------------
-# Get employee token
+# Get employee token (fresh login + refresh — never reuse)
 # ------------------------------------------------
 
 echo ""
-echo "Authenticating employee..."
+echo "Authenticating employee (login + refresh)..."
 
-EMP_TOKEN=$(curl -L -s \
-  -H "apikey: $SUPABASE_ANON" \
-  -H "Content-Type: application/json" \
-  -d "{\"email\":\"$EMP_EMAIL\",\"password\":\"$EMP_PASSWORD\"}" \
-  "$SUPABASE_URL/auth/v1/token?grant_type=password" | jq -r .access_token)
-
-if [ "$EMP_TOKEN" = "null" ]; then
-  echo "Failed to obtain employee token"
+EMP_TOKEN=$(login_and_refresh "$EMP_EMAIL" "$EMP_PASSWORD")
+if [ $? -ne 0 ] || [ -z "$EMP_TOKEN" ]; then
+  echo "✗ Failed to obtain employee token — check FT_EMP_EMAIL / FT_EMP_PASSWORD secrets"
+  echo "  Also verify the user exists in Supabase Auth and public.users"
   exit 1
 fi
+
+# ── Auth Hook Integrity — Employee ────────────────────────────
+# Validate JWT claims BEFORE making any API calls.
+# If claims are missing the hook is not enabled; all calls will 401.
+assert_hook_claims "employee" "$EMP_TOKEN" "true"
+
 
 # ------------------------------------------------
 # Employee tests
@@ -214,22 +354,21 @@ else
 fi
 
 # ------------------------------------------------
-# Get admin token
+# Get admin token (fresh login + refresh — never reuse)
 # ------------------------------------------------
 
 echo ""
-echo "Authenticating admin..."
+echo "Authenticating admin (login + refresh)..."
 
-ADMIN_TOKEN=$(curl -L -s \
-  -H "apikey: $SUPABASE_ANON" \
-  -H "Content-Type: application/json" \
-  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" \
-  "$SUPABASE_URL/auth/v1/token?grant_type=password" | jq -r .access_token)
-
-if [ "$ADMIN_TOKEN" = "null" ]; then
-  echo "Failed to obtain admin token"
+ADMIN_TOKEN=$(login_and_refresh "$ADMIN_EMAIL" "$ADMIN_PASSWORD")
+if [ $? -ne 0 ] || [ -z "$ADMIN_TOKEN" ]; then
+  echo "✗ Failed to obtain admin token — check FT_ADMIN_EMAIL / FT_ADMIN_PASSWORD secrets"
+  echo "  Also verify the user exists in Supabase Auth and public.users"
   exit 1
 fi
+
+# ── Auth Hook Integrity — Admin ───────────────────────────────
+assert_hook_claims "admin" "$ADMIN_TOKEN" "false"
 
 STATUS=$(request GET "/admin/org-summary" "$ADMIN_TOKEN")
 

@@ -872,7 +872,10 @@ DECLARE
   v_employee_id UUID;
   v_org_id      UUID;
 BEGIN
-  SELECT role, id, organization_id INTO v_role, v_employee_id, v_org_id
+  -- Resolve role + org from the authoritative public.users table.
+  -- event->>'sub' contains the user UUID (same as auth.users.id).
+  SELECT role, organization_id
+  INTO v_role, v_org_id
   FROM public.users
   WHERE id = (event->>'sub')::uuid
   LIMIT 1;
@@ -899,8 +902,11 @@ BEGIN
 END;
 $$;
 
-COMMENT ON FUNCTION public.custom_access_token_hook(JSONB) IS
-  'Supabase Auth hook to inject custom claims (role, org_id, employee_id) into JWT.';
+COMMENT ON FUNCTION public.custom_access_token_hook(jsonb) IS
+'Supabase Auth Hook — REQUIRED for JWT claims (role, org_id, employee_id).
+Must be enabled in: Supabase Dashboard → Authentication → Hooks →
+Customize Access Token (JWT) Claims → Postgres → public.custom_access_token_hook.
+If disabled → ALL authenticated API requests will fail with 401.';
 
 -- ══════════════════════════════════════════════════════════════
 -- TRIGGERS
@@ -1156,6 +1162,12 @@ CREATE POLICY "els_employee_self" ON public.employee_latest_sessions
 -- Without this, PostgREST RPC calls (e.g. get_org_latest_sessions,
 -- get_active_map_markers) fail silently with 404 or permission denied.
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO authenticated;
+
+-- Allow the Supabase Auth internals to invoke the custom access token hook.
+-- Without these grants the hook is silently skipped and no custom claims
+-- (role, org_id, employee_id) are injected into issued JWTs.
+GRANT USAGE  ON SCHEMA public TO supabase_auth_admin;
+GRANT EXECUTE ON FUNCTION public.custom_access_token_hook(jsonb) TO supabase_auth_admin;
 
 -- ══════════════════════════════════════════════════════════════
 -- CRON JOBS
