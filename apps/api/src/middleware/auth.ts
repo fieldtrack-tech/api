@@ -2,11 +2,9 @@ import type { FastifyRequest, FastifyReply } from "fastify";
 import { trace, context } from "@opentelemetry/api";
 import { validate as uuidValidate } from "uuid";
 import { jwtPayloadSchema } from "../types/jwt.js";
-import { UnauthorizedError } from "../utils/errors.js";
+import { AppError, UnauthorizedError } from "../utils/errors.js";
 import { fail } from "../utils/response.js";
 import { verifySupabaseToken } from "../auth/jwtVerifier.js";
-import { supabaseServiceClient } from "../config/supabase.js";
-import { getCached } from "../utils/cache.js";
 import { env } from "../config/env.js";
 
 /**
@@ -78,83 +76,46 @@ export async function authenticate(
             userId = decoded.sub;
             email = decoded.email;
 
-            // Improvement 2: Validate UUID format for sub
-            // Protects against malformed tokens with invalid user IDs
+            // Validate UUID format for sub to stop malformed tokens early
             if (!uuidValidate(userId)) {
                 request.log.warn({ sub: userId }, "Invalid user ID format in token");
                 throw new UnauthorizedError("Invalid user id in token");
             }
 
-            // Read the application role from app_metadata — this field is
-            // server-controlled (written by custom_access_token_hook reading
-            // public.users.role). user_metadata is user-editable via
-            // supabase.auth.updateUser() and MUST NOT be used for authz.
-            role = (decoded.app_metadata as Record<string, unknown> | undefined)?.role as string | undefined;
+            // Phase 28: Read claims with dual-format support.
+            //
+            // New hook (Phase 28a): injects role + org_id + employee_id as
+            // TOP-LEVEL JWT claims.  Read from decoded.role / decoded.org_id.
+            //
+            // Old hook (Phase 5 / legacy): wrote to app_metadata.role /
+            // app_metadata.organization_id / app_metadata.employee_id.
+            //
+            // Support both so that tokens minted by either hook are accepted
+            // during the rotation window (max 1 h until all tokens expire).
+            // user_metadata is user-editable and MUST NOT be used for authz.
+            role          = decoded.role ?? decoded.app_metadata?.role;
+            organizationId = decoded.org_id ?? decoded.app_metadata?.organization_id;
+            const hookEmployeeId = decoded.employee_id ?? decoded.app_metadata?.employee_id;
 
-            if (!role) {
-                request.log.warn({ sub: decoded.sub }, "User app_metadata.role missing in token — custom_access_token_hook may not have run");
-                throw new UnauthorizedError("User role missing in token metadata");
-            }
-
-            // Phase 5: Short-circuit DB lookup if org identity is embedded in
-            // the JWT via the custom_access_token_hook. Tokens minted before
-            // the hook was deployed fall back to the Redis-cached DB lookup.
-            const embeddedOrgId = (decoded.app_metadata as Record<string, unknown> | undefined)?.organization_id as string | undefined;
-            const embeddedEmployeeId = (decoded.app_metadata as Record<string, unknown> | undefined)?.employee_id as string | undefined;
-
-            if (embeddedOrgId) {
-                organizationId = embeddedOrgId;
-                request.employeeId = embeddedEmployeeId;
-            } else {
-                // Steps 3 & 3b: Resolve organization + employee identity.
-                // Results are cached in Redis (5 min TTL) so high-frequency polling
-                // (e.g. 50 VUs on the admin dashboard) doesn't hit the users/employees
-                // tables on every request — a single DB round-trip per cache window.
-                interface UserAuthContext { organizationId: string; employeeId: string | undefined; }
-                const authContext = await getCached<UserAuthContext>(
-                    `auth:user:${userId}`,
-                    300, // 5-minute TTL
-                    async () => {
-                        // Run both queries in parallel — users.id is globally unique
-                        // so we don't need organization_id from users to scope the
-                        // employees query.  We validate org consistency afterwards.
-                        const [userResult, employeeResult] = await Promise.all([
-                            supabaseServiceClient
-                                .from("users")
-                                .select("organization_id")
-                                .eq("id", userId)
-                                .single(),
-                            supabaseServiceClient
-                                .from("employees")
-                                .select("id, organization_id")
-                                .eq("user_id", userId)
-                                .eq("is_active", true)
-                                .limit(1)
-                                .maybeSingle(),
-                        ]);
-
-                        if (userResult.error || !userResult.data) {
-                            request.log.warn({ sub: userId, error: userResult.error }, "User not found in database");
-                            throw new UnauthorizedError("User not found");
-                        }
-
-                        const orgId = userResult.data.organization_id;
-
-                        // Only accept the employee row if it belongs to the same org
-                        // (defence-in-depth: a user_id should never straddle two orgs).
-                        const empRow = employeeResult.data;
-                        const employeeId =
-                            empRow && empRow.organization_id === orgId
-                                ? (empRow.id as string)
-                                : undefined;
-
-                        return { organizationId: orgId, employeeId };
+            if (!role || !organizationId) {
+                request.log.warn(
+                    {
+                        sub: decoded.sub,
+                        hasRole:  !!decoded.role || !!decoded.app_metadata?.role,
+                        hasOrgId: !!decoded.org_id || !!decoded.app_metadata?.organization_id,
+                        claimSource: decoded.role ? 'top-level' : decoded.app_metadata?.role ? 'app_metadata' : 'none',
                     },
+                    "JWT missing required claims — custom_access_token_hook may not be enabled",
                 );
-
-                organizationId = authContext.organizationId;
-                request.employeeId = authContext.employeeId;
+                throw new AppError(
+                    "JWT missing required claims",
+                    401,
+                    "AUTH_HOOK_MISSING",
+                    { hint: "Check Supabase Auth Hook: Dashboard → Authentication → Hooks → Customize Access Token (JWT) Claims" },
+                );
             }
+
+            request.employeeId = hookEmployeeId;
         }
 
         // Step 4: Validate complete user context with Zod
@@ -191,7 +152,8 @@ export async function authenticate(
         }
     } catch (error) {
         // Never log the raw token for security reasons
-        const err = error instanceof UnauthorizedError
+        // Preserve AppError subclasses (including code + details for AUTH_HOOK_MISSING)
+        const err = error instanceof AppError
             ? error
             : new UnauthorizedError("Invalid or missing authentication token");
 
@@ -199,7 +161,7 @@ export async function authenticate(
         // Without it, the hook resolves normally and Fastify proceeds to call the
         // route handler — which then hits "Reply already sent". The client still
         // receives 401, but Fastify logs a spurious internal error.
-        void reply.status(err.statusCode).send(fail(err.message, request.id));
+        void reply.status(err.statusCode).send(fail(err.message, request.id, (err as AppError).code, (err as AppError).details));
         return;
     }
 }
