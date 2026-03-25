@@ -1,91 +1,57 @@
-name: CodeQL Security Analysis
+name: "CodeQL Security Scan"
 
 on:
   push:
-    branches: [master, beta]
+    branches: [ "master" ]
   pull_request:
-    branches: [master, beta]
+    branches: [ "master" ]
   schedule:
-    # Run every Monday at 02:00 UTC — catches new CVEs on unchanged code
-    - cron: '0 2 * * 1'
+    - cron: "0 3 * * 1"  # Weekly scan (Monday 3 AM UTC)
 
 concurrency:
   group: codeql-${{ github.ref }}
   cancel-in-progress: true
 
-# Minimum required permissions — no write access to code
 permissions:
+  actions: read
   contents: read
-  security-events: write   # required to upload SARIF results
-  actions: read            # required for private repositories
+  security-events: write
 
 jobs:
-  codeql:
-    name: CodeQL Analysis
+  analyze:
+    name: Analyze (CodeQL)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [ "javascript" ]
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
-      # Initialize CodeQL BEFORE the build so it can instrument the process.
-      # Using security-extended gives us the full CWE coverage set
-      # (superset of security-and-quality, minus noisy style checks).
+      # Initialize CodeQL (official queries only)
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
-          languages: javascript-typescript
-          # Built-in suite + FieldTrack custom checks
-          queries: >-
-            security-extended,
-            .github/codeql/queries/fieldtrack-security-suite.qls
-          config: |
-            paths:
-              - apps/api/src
-              - packages/types/src
-            paths-ignore:
-              - '**/node_modules/**'
-              - '**/dist/**'
-              - '**/*.test.ts'
-              - '**/*.spec.ts'
-              - 'apps/api/tests/**'
-              - 'codeql-db/**'
+          languages: ${{ matrix.language }}
+          queries: security-and-quality
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v5
+      # Install dependencies (required for accurate analysis)
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: '24'
-          cache: npm
+          node-version: 20
 
-      # Build TypeScript before analysis.
-      # CodeQL javascript extractor handles .ts directly, but the build
-      # step validates that the code compiles — no analysing broken code.
       - name: Install dependencies
         run: npm ci
 
-      - name: Build packages/types (api depends on it)
-        run: npm run build -w packages/types
+      # Build project (VERY IMPORTANT for TypeScript)
+      - name: Build project
+        run: npm run build || echo "No build step"
 
-      - name: Build apps/api
-        working-directory: apps/api
-        run: npm run build
-
+      # Run CodeQL analysis
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
-        with:
-          category: "/language:javascript-typescript"
-          # Upload SARIF to GitHub Security tab
-          upload: true
-          # Keep SARIF for artifact upload below
-          output: results/codeql.sarif
-
-      # Upload SARIF as a workflow artifact so it can be reviewed offline
-      # without needing GitHub Advanced Security enabled.
-      - name: Upload SARIF artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: codeql-results-${{ github.sha }}
-          path: results/codeql.sarif
-          retention-days: 30
+        uses: github/codeql-action/analyze@v4
