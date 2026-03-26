@@ -198,15 +198,6 @@ const envSchema = z
      */
     SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
 
-    /**
-     * Supabase JWT signing secret (HS256).
-     * Optional — kept only for backward compatibility with legacy test setups.
-     * The server exclusively uses Supabase JWKS (ES256) for JWT verification.
-     */
-    SUPABASE_JWT_SECRET: z
-      .string()
-      .min(32, "SUPABASE_JWT_SECRET must be at least 32 characters")
-      .optional(),
 
     // ── Redis ─────────────────────────────────────────────────────────────────
 
@@ -603,7 +594,6 @@ export type PublicEnvConfig = ReturnType<typeof getPublicEnv>;
 export function getPrivateEnv() {
   return {
     SUPABASE_SERVICE_ROLE_KEY: env.SUPABASE_SERVICE_ROLE_KEY,
-    SUPABASE_JWT_SECRET:       env.SUPABASE_JWT_SECRET,
     METRICS_SCRAPE_TOKEN:      env.METRICS_SCRAPE_TOKEN,
     REDIS_URL:                 env.REDIS_URL,
   } as const;
@@ -669,7 +659,6 @@ interface MinimalLogger {
  *
  * What it deliberately omits (secrets):
  *   - SUPABASE_SERVICE_ROLE_KEY
- *   - SUPABASE_JWT_SECRET
  *   - METRICS_SCRAPE_TOKEN
  *   - REDIS_URL  (may contain a password in the connection string)
  *   - SUPABASE_ANON_KEY / SUPABASE_URL (not needed for deployment verification)

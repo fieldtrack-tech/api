@@ -101,7 +101,6 @@ export interface BackendEnvContract {
   SUPABASE_URL: string;
   SUPABASE_ANON_KEY: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
-  SUPABASE_JWT_SECRET: string;
 
   // Redis
   REDIS_URL: string;
@@ -222,7 +221,6 @@ export const ENV_VARS = {
   SUPABASE_URL:                 "SUPABASE_URL",
   SUPABASE_ANON_KEY:            "SUPABASE_ANON_KEY",
   SUPABASE_SERVICE_ROLE_KEY:    "SUPABASE_SERVICE_ROLE_KEY",
-  SUPABASE_JWT_SECRET:          "SUPABASE_JWT_SECRET",
   REDIS_URL:                    "REDIS_URL",
   METRICS_SCRAPE_TOKEN:         "METRICS_SCRAPE_TOKEN",
   TEMPO_ENDPOINT:               "TEMPO_ENDPOINT",
