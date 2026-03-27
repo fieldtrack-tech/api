@@ -51,9 +51,9 @@ export default function ExpensesPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold tracking-tight">My Expenses</h2>
-        <p className="text-muted-foreground">Submit and track your expense claims.</p>
+      <div className="page-header">
+        <h1 className="page-title">My Expenses</h1>
+        <p className="page-description">Submit and track your expense claims.</p>
       </div>
 
       <Card>

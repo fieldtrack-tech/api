@@ -51,7 +51,7 @@ function AdminHeroCard({
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.45, ease: "easeOut" }}
-      className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary via-primary/90 to-violet-600 p-6 text-white shadow-lg shadow-primary/20"
+      className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-[#1040C0] via-primary to-[#2A6AF5] p-6 text-white shadow-brand"
     >
       {/* Decorative circles */}
       <div className="pointer-events-none absolute -right-12 -top-12 h-56 w-56 rounded-full bg-white/5" />
@@ -713,7 +713,7 @@ function EmployeeHeroCard({
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.45, ease: "easeOut" }}
-      className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary to-cyan-500 p-6 text-white shadow-lg shadow-primary/20"
+      className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-[#1040C0] via-primary to-[#4DAAFF] p-6 text-white shadow-brand"
     >
       <div className="pointer-events-none absolute -right-10 -top-10 h-48 w-48 rounded-full bg-white/5" />
 

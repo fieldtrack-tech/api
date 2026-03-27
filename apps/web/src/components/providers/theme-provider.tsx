@@ -25,12 +25,13 @@ function getSystemTheme(): "light" | "dark" {
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [theme, setThemeState] = useState<Theme>("system");
-  const [resolvedTheme, setResolvedTheme] = useState<"light" | "dark">("light");
+  const [resolvedTheme, setResolvedTheme] = useState<"light" | "dark">("dark");
 
   // Read persisted preference on mount
   useEffect(() => {
     const stored = localStorage.getItem(STORAGE_KEY) as Theme | null;
-    const initial = stored ?? "system";
+    // Default to "dark" to match brand identity (not system)
+    const initial = stored ?? "dark";
     setThemeState(initial);
     const resolved = initial === "system" ? getSystemTheme() : initial;
     setResolvedTheme(resolved);

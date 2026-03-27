@@ -40,13 +40,13 @@ export default function LeaderboardPage() {
     <div className="space-y-6">
       {/* Header */}
       <FadeUp>
-        <div className="flex flex-col gap-1">
-          <h2 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-            <Trophy className="h-6 w-6 text-amber-500" />
-            Leaderboard
-          </h2>
-          <p className="text-sm text-muted-foreground">{METRIC_DESCRIPTIONS[metric]}</p>
-        </div>
+      <div className="page-header">
+        <h1 className="page-title flex items-center gap-2">
+          <Trophy className="h-6 w-6 text-amber-500" />
+          Leaderboard
+        </h1>
+        <p className="page-description">{METRIC_DESCRIPTIONS[metric]}</p>
+      </div>
       </FadeUp>
 
       {/* Top 3 podium (visual if we have data) */}
