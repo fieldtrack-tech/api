@@ -19,6 +19,7 @@ import { StaggerList, StaggerItem, FadeUp } from "@/components/motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Input } from "@/components/ui/input";
 import { formatDistance, formatDuration, formatCurrency } from "@/lib/utils";
 import { Activity, MapPin, Clock, Receipt, Users, TrendingUp, Trophy, Calendar } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -124,22 +125,22 @@ function DateRangeFilter({
             <div className="flex flex-wrap items-end gap-3 rounded-xl border border-border/60 bg-muted/30 px-4 py-3">
               <div className="flex flex-col gap-1">
                 <span className="text-xs text-muted-foreground font-medium">Start Date</span>
-                <input
+                <Input
                   type="date"
                   value={localFrom}
                   max={localTo}
                   onChange={(e) => setLocalFrom(e.target.value)}
-                  className="rounded-lg border border-input bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  className="h-8 text-sm"
                 />
               </div>
               <div className="flex flex-col gap-1">
                 <span className="text-xs text-muted-foreground font-medium">End Date</span>
-                <input
+                <Input
                   type="date"
                   value={localTo}
                   min={localFrom}
                   onChange={(e) => setLocalTo(e.target.value)}
-                  className="rounded-lg border border-input bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  className="h-8 text-sm"
                 />
               </div>
               <button
@@ -332,9 +333,9 @@ export default function AnalyticsPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col gap-1">
-        <h2 className="text-2xl font-bold tracking-tight">Analytics</h2>
-        <p className="text-sm text-muted-foreground">
+      <div className="page-header">
+        <h1 className="page-title">Analytics</h1>
+        <p className="page-description">
           Historical performance insights — select a date range to explore trends.
         </p>
       </div>

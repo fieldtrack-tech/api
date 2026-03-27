@@ -20,12 +20,9 @@ interface SessionsTableProps {
 }
 
 function ActivityBadge({ status }: { status: ActivityStatus | undefined }) {
-  if (status === "ACTIVE")
-    return <Badge className="bg-green-100 text-green-800 border-transparent">Active</Badge>;
-  if (status === "RECENT")
-    return <Badge className="bg-blue-100 text-blue-800 border-transparent">Recent</Badge>;
-  if (status === "INACTIVE")
-    return <Badge className="bg-gray-100 text-gray-600 border-transparent">Inactive</Badge>;
+  if (status === "ACTIVE") return <Badge variant="success">Active</Badge>;
+  if (status === "RECENT") return <Badge variant="info">Recent</Badge>;
+  if (status === "INACTIVE") return <Badge variant="secondary">Inactive</Badge>;
   return <Badge variant="outline">—</Badge>;
 }
 

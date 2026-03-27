@@ -1,9 +1,18 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
-import { Menu, LogOut, ChevronDown, UserCircle } from "lucide-react";
+import {
+  Menu,
+  LogOut,
+  ChevronDown,
+  UserCircle,
+  Search,
+  MapPin,
+  Activity,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,6 +29,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/hooks/useAuth";
 import { useMyProfile } from "@/hooks/queries/useProfile";
 import { useOrgSummary } from "@/hooks/queries/useAnalytics";
@@ -32,11 +42,10 @@ function useTodayString() {
     const now = new Date();
     const weekday = now.toLocaleDateString("en-IN", { weekday: "long" });
     const date = now.toLocaleDateString("en-IN", { month: "long", day: "numeric" });
-    return `${weekday} • ${date}`;
+    return `${weekday}, ${date}`;
   }, []);
 }
 
-/** Returns ISO date range for today (local midnight to local 23:59:59) */
 function useTodayRange() {
   return useMemo(() => {
     const now = new Date();
@@ -46,11 +55,65 @@ function useTodayRange() {
   }, []);
 }
 
-function getFirstName(fullName: string | undefined | null, email: string | undefined | null): string {
-  if (fullName) return fullName.split(" ")[0];
-  if (email) return email.split("@")[0];
-  return "there";
+// ─── Live stat pill ───────────────────────────────────────────────────────────
+
+function LiveStatPill({
+  label,
+  value,
+  variant = "default",
+}: {
+  label: string;
+  value: string;
+  variant?: "emerald" | "blue" | "violet" | "default";
+}) {
+  const variantClasses = {
+    emerald:
+      "bg-emerald-50 text-emerald-700 border-emerald-200/60 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20",
+    blue:
+      "bg-blue-50 text-blue-700 border-blue-200/60 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-500/20",
+    violet:
+      "bg-violet-50 text-violet-700 border-violet-200/60 dark:bg-violet-500/10 dark:text-violet-400 dark:border-violet-500/20",
+    default:
+      "bg-secondary text-secondary-foreground border-border/60",
+  };
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1",
+        "text-[11px] font-semibold leading-none tabular-nums",
+        variantClasses[variant]
+      )}
+    >
+      <span>{value}</span>
+      <span className="opacity-60 font-normal">{label}</span>
+    </span>
+  );
 }
+
+// ─── Avatar initials ──────────────────────────────────────────────────────────
+
+function AvatarInitials({ name, size = "sm" }: { name: string; size?: "sm" | "md" }) {
+  const initials = name
+    .split(" ")
+    .slice(0, 2)
+    .map((n) => n[0] ?? "")
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
+
+  return (
+    <div
+      className={cn(
+        "flex shrink-0 items-center justify-center rounded-lg bg-primary/10 font-bold text-primary",
+        size === "sm" ? "h-7 w-7 text-[11px]" : "h-9 w-9 text-sm"
+      )}
+    >
+      {initials}
+    </div>
+  );
+}
+
+// ─── Header ───────────────────────────────────────────────────────────────────
 
 export function Header() {
   const { user, role, logout } = useAuth();
@@ -58,51 +121,87 @@ export function Header() {
   const { from, to } = useTodayRange();
   const { data: orgSummary } = useOrgSummary(from, to);
   const today = useTodayString();
+  const [searchOpen, setSearchOpen] = useState(false);
 
   const isAdmin = role === "ADMIN";
-  const firstName = getFirstName(profile?.name, user?.email);
-  const displayName = profile?.name ?? user?.email ?? "Account";
+  const displayName = profile?.name ?? user?.email?.split("@")[0] ?? "Account";
+  const firstName = displayName.split(" ")[0];
 
   return (
-    <header className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-      {/* Main bar */}
-      <div className="flex h-14 items-center justify-between px-4 md:px-6">
-        {/* Left: mobile menu + greeting */}
-        <div className="flex items-center gap-3">
+    <header className="sticky top-0 z-40 h-14 border-b border-border/60 bg-background/90 backdrop-blur-md">
+      <div className="flex h-full items-center justify-between px-4 gap-3">
+        {/* ── Left: mobile menu + context ── */}
+        <div className="flex items-center gap-3 min-w-0">
+          {/* Mobile hamburger */}
           <Sheet>
             <SheetTrigger asChild>
-              <Button variant="ghost" size="icon" className="md:hidden h-8 w-8">
+              <Button variant="ghost" size="icon-sm" className="md:hidden">
                 <Menu className="h-4 w-4" />
                 <span className="sr-only">Toggle menu</span>
               </Button>
             </SheetTrigger>
-            <SheetContent side="left" className="p-0 w-64">
-              <SheetHeader className="p-6 border-b">
-                <SheetTitle className="text-primary">FieldTrack</SheetTitle>
+            <SheetContent side="left" className="w-64 p-0 bg-sidebar border-r border-border/60">
+              <SheetHeader className="flex h-14 items-center justify-start px-4 border-b border-border/60">
+                <SheetTitle className="flex items-center gap-2 text-[15px] font-bold">
+                  <div className="relative flex h-7 w-7 items-center justify-center rounded-lg bg-primary">
+                    <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4">
+                      <path d="M5 4h10v2H7v3h7v2H7v5H5V4z" fill="white" />
+                    </svg>
+                    <div className="absolute -right-1 -top-1 flex h-3 w-3 items-center justify-center rounded-full bg-[#1A4FD0] ring-2 ring-sidebar">
+                      <MapPin className="h-1.5 w-1.5 text-white" strokeWidth={3} />
+                    </div>
+                  </div>
+                  FieldTrack
+                </SheetTitle>
               </SheetHeader>
               <SidebarNav />
             </SheetContent>
           </Sheet>
 
+          {/* Greeting — hidden on small screens */}
           <div className="hidden md:block">
             <p className="text-sm font-semibold leading-none text-foreground">
               Hello, {firstName} 👋
             </p>
-            <p className="mt-0.5 text-xs text-muted-foreground">{today}</p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">{today}</p>
           </div>
         </div>
 
-        {/* Right: quick stats (admin) + theme toggle + identity */}
-        <div className="flex items-center gap-2">
-          {/* Admin quick-stat badges */}
+        {/* ── Center: search bar ── */}
+        <div className={cn("hidden md:flex flex-1 max-w-xs items-center", searchOpen && "flex")}>
+          <div className="relative w-full">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+            <Input
+              placeholder="Search sessions, employees..."
+              className="h-8 pl-8 text-xs bg-muted/40 border-border/50 focus-visible:bg-background"
+            />
+          </div>
+        </div>
+
+        {/* ── Right: stats + controls ── */}
+        <div className="flex shrink-0 items-center gap-2">
+          {/* Admin live stats */}
           {isAdmin && orgSummary && (
-            <div className="hidden lg:flex items-center gap-2 mr-2">
-              <StatBadge label="Active" value={String(orgSummary.activeEmployeesCount)} color="emerald" />
-              <StatBadge label="Sessions" value={String(orgSummary.totalSessions)} color="blue" />
-              <StatBadge label="Distance" value={formatDistance(orgSummary.totalDistanceKm)} color="violet" />
+            <div className="hidden lg:flex items-center gap-1.5 mr-1">
+              <LiveStatPill
+                label="active"
+                value={String(orgSummary.activeEmployeesCount)}
+                variant="emerald"
+              />
+              <LiveStatPill
+                label="sessions"
+                value={String(orgSummary.totalSessions)}
+                variant="blue"
+              />
+              <LiveStatPill
+                label="distance"
+                value={formatDistance(orgSummary.totalDistanceKm)}
+                variant="violet"
+              />
             </div>
           )}
 
+          {/* Theme toggle */}
           <ThemeToggle />
 
           {/* Identity dropdown */}
@@ -111,45 +210,60 @@ export function Header() {
               <Button
                 variant="ghost"
                 size="sm"
-                className="flex items-center gap-2 h-8 px-2 rounded-lg hover:bg-accent"
+                className="h-8 gap-1.5 px-2 hover:bg-accent rounded-lg"
               >
-                {/* Avatar circle */}
-                <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">
-                  {displayName
-                    .split(" ")
-                    .slice(0, 2)
-                    .map((n) => n[0])
-                    .join("")
-                    .toUpperCase()
-                    .slice(0, 2)}
-                </span>
+                <AvatarInitials name={displayName} size="sm" />
                 <div className="hidden sm:block text-left">
-                  <p className="text-xs font-semibold leading-none">{displayName.split(" ")[0]}</p>
-                  <p className={cn(
-                    "mt-0.5 text-[10px] font-medium leading-none",
-                    isAdmin ? "text-amber-600 dark:text-amber-400" : "text-primary"
-                  )}>
+                  <p className="text-[12px] font-semibold leading-none">{firstName}</p>
+                  <p
+                    className={cn(
+                      "mt-0.5 text-[10px] leading-none",
+                      isAdmin
+                        ? "text-amber-600 dark:text-amber-400"
+                        : "text-primary"
+                    )}
+                  >
                     {role ?? "EMPLOYEE"}
                   </p>
                 </div>
-                <ChevronDown className="h-3 w-3 text-muted-foreground hidden sm:block" />
+                <ChevronDown className="hidden sm:block h-3 w-3 text-muted-foreground/70" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-52">
-              <DropdownMenuLabel className="pb-1">
+
+            <DropdownMenuContent align="end" className="w-52 rounded-xl shadow-lg border border-border/60">
+              <DropdownMenuLabel className="pb-1.5">
                 <p className="font-semibold text-sm">{displayName}</p>
-                <p className="text-xs text-muted-foreground font-normal truncate">{user?.email}</p>
+                <p className="text-xs text-muted-foreground font-normal truncate mt-0.5">
+                  {user?.email}
+                </p>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
               <DropdownMenuItem asChild>
-                <Link href="/profile" className="cursor-pointer flex items-center">
-                  <UserCircle className="mr-2 h-4 w-4" />
+                <Link
+                  href="/profile"
+                  className="cursor-pointer flex items-center gap-2 text-sm"
+                >
+                  <UserCircle className="h-4 w-4" />
                   Profile
                 </Link>
               </DropdownMenuItem>
+              {isAdmin && (
+                <DropdownMenuItem asChild>
+                  <Link
+                    href="/admin/monitoring"
+                    className="cursor-pointer flex items-center gap-2 text-sm"
+                  >
+                    <Activity className="h-4 w-4" />
+                    Monitoring
+                  </Link>
+                </DropdownMenuItem>
+              )}
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => void logout()} className="cursor-pointer text-destructive focus:text-destructive">
-                <LogOut className="mr-2 h-4 w-4" />
+              <DropdownMenuItem
+                onClick={() => void logout()}
+                className="cursor-pointer text-destructive focus:text-destructive gap-2 text-sm"
+              >
+                <LogOut className="h-4 w-4" />
                 Sign out
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -160,16 +274,4 @@ export function Header() {
   );
 }
 
-function StatBadge({ label, value, color }: { label: string; value: string; color: "emerald" | "blue" | "violet" }) {
-  const colorMap = {
-    emerald: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-400 dark:border-emerald-800",
-    blue: "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800",
-    violet: "bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-950/40 dark:text-violet-400 dark:border-violet-800",
-  };
-  return (
-    <span className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium", colorMap[color])}>
-      <span className="font-bold">{value}</span>
-      <span className="opacity-70">{label}</span>
-    </span>
-  );
-}
+

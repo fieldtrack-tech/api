@@ -15,6 +15,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/ui/use-toast";
 import { UserPlus, Search, UserCheck, UserX } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
+import { EmptyState } from "@/components/EmptyState";
+import { Users } from "lucide-react";
 
 const PAGE_SIZE = 50;
 
@@ -32,22 +37,22 @@ function EmployeeRow({ employee }: { employee: EmployeeRecord }) {
   }
 
   return (
-    <tr className="border-b last:border-0 hover:bg-muted/30 transition-colors">
-      <td className="py-3 px-4 font-mono text-sm">{employee.employee_code}</td>
-      <td className="py-3 px-4 font-medium">{employee.name}</td>
-      <td className="py-3 px-4 text-muted-foreground text-sm">{employee.phone ?? "—"}</td>
-      <td className="py-3 px-4">
-        <Badge variant={employee.is_active ? "default" : "outline"}>
+    <tr className="border-b border-border/40 last:border-0 hover:bg-accent/40 transition-colors">
+      <td className="py-3 px-3 font-mono text-xs text-muted-foreground bg-muted/20">{employee.employee_code}</td>
+      <td className="py-3 px-3 font-medium text-sm">{employee.name}</td>
+      <td className="py-3 px-3 text-muted-foreground text-sm">{employee.phone ?? "—"}</td>
+      <td className="py-3 px-3">
+        <Badge variant={employee.is_active ? "success" : "outline"}>
           {employee.is_active ? "Active" : "Inactive"}
         </Badge>
       </td>
-      <td className="py-3 px-4">
+      <td className="py-3 px-3">
         <Button
           variant="ghost"
           size="sm"
           onClick={handleToggle}
           disabled={setStatus.isPending}
-          className="gap-1"
+          className="gap-1.5 h-8 text-xs"
         >
           {employee.is_active ? (
             <><UserX className="h-3 w-3" /> Deactivate</>
@@ -112,13 +117,13 @@ export default function AdminEmployeesPage() {
   if (!permissions.viewAnalytics) return null;
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="space-y-5">
+      <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">Employees</h2>
-          <p className="text-muted-foreground">Manage employee records — {total} total</p>
+          <h1 className="text-2xl font-bold tracking-tight">Employees</h1>
+          <p className="mt-0.5 text-sm text-muted-foreground">{total} employees registered</p>
         </div>
-        <Button onClick={() => setShowCreateForm((v) => !v)} className="gap-2">
+        <Button onClick={() => setShowCreateForm((v) => !v)} className="gap-2 shrink-0">
           <UserPlus className="h-4 w-4" />
           Add Employee
         </Button>
@@ -129,20 +134,20 @@ export default function AdminEmployeesPage() {
           <CardHeader>
             <CardTitle>New Employee</CardTitle>
           </CardHeader>
-          <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-end">
-            <div className="flex flex-col gap-1 flex-1">
-              <label className="text-sm font-medium">Name *</label>
-              <input
-                className="border rounded px-3 py-2 text-sm"
+        <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-end p-5">
+            <div className="flex flex-col gap-1.5 flex-1">
+              <Label htmlFor="new-name" className="text-xs font-medium">Name *</Label>
+              <Input
+                id="new-name"
                 placeholder="Full name"
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
               />
             </div>
-            <div className="flex flex-col gap-1 flex-1">
-              <label className="text-sm font-medium">Phone</label>
-              <input
-                className="border rounded px-3 py-2 text-sm"
+            <div className="flex flex-col gap-1.5 flex-1">
+              <Label htmlFor="new-phone" className="text-xs font-medium">Phone</Label>
+              <Input
+                id="new-phone"
                 placeholder="+91 98765 43210"
                 value={newPhone}
                 onChange={(e) => setNewPhone(e.target.value)}
@@ -161,11 +166,11 @@ export default function AdminEmployeesPage() {
       )}
 
       <Card>
-        <CardContent className="pt-4 pb-3 flex flex-col sm:flex-row gap-3">
+        <CardContent className="p-4 flex flex-col sm:flex-row gap-3">
           <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <input
-              className="border rounded px-3 py-2 pl-9 text-sm w-full"
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+            <Input
+              className="pl-9"
               placeholder="Search by name…"
               value={search}
               onChange={(e) => {
@@ -203,19 +208,33 @@ export default function AdminEmployeesPage() {
       <Card>
         <CardContent className="p-0">
           {isLoading ? (
-            <div className="p-8 text-center text-muted-foreground">Loading employees…</div>
+            <div className="p-6 space-y-3">
+              {Array.from({ length: 8 }).map((_, i) => (
+                <div key={i} className="flex items-center gap-3 animate-pulse">
+                  <Skeleton className="h-3 w-16" />
+                  <Skeleton className="h-3 w-32" />
+                  <Skeleton className="h-3 w-24" />
+                  <Skeleton className="h-5 w-14 rounded-full" />
+                </div>
+              ))}
+            </div>
           ) : employees.length === 0 ? (
-            <div className="p-8 text-center text-muted-foreground">No employees found.</div>
+            <EmptyState
+              icon={Users}
+              title="No employees found"
+              description={search ? `No results for \"${search}\"` : "Add your first employee to get started."}
+              compact
+            />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b bg-muted/50 text-muted-foreground text-xs uppercase tracking-wide">
-                    <th className="text-left py-3 px-4">Code</th>
-                    <th className="text-left py-3 px-4">Name</th>
-                    <th className="text-left py-3 px-4">Phone</th>
-                    <th className="text-left py-3 px-4">Status</th>
-                    <th className="text-left py-3 px-4">Actions</th>
+                  <tr className="border-b border-border/60 bg-muted/30">
+                    <th className="text-left py-2.5 px-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Code</th>
+                    <th className="text-left py-2.5 px-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Name</th>
+                    <th className="text-left py-2.5 px-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Phone</th>
+                    <th className="text-left py-2.5 px-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Status</th>
+                    <th className="text-left py-2.5 px-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Actions</th>
                   </tr>
                 </thead>
                 <tbody>

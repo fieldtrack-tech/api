@@ -35,9 +35,9 @@ export default function SessionsPage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h2 className="text-2xl font-bold tracking-tight">My Sessions</h2>
-        <p className="text-muted-foreground">Your attendance and field sessions.</p>
+      <div className="page-header">
+        <h1 className="page-title">My Sessions</h1>
+        <p className="page-description">Your attendance and field sessions.</p>
       </div>
 
       {error && <ErrorBanner error={error} />}

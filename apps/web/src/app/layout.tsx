@@ -5,20 +5,24 @@ import { Providers } from "@/app/providers";
 
 export const dynamic = "force-dynamic";
 
-const inter = Inter({ subsets: ["latin"] });
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
-  title: "FieldTrack",
+  title: {
+    default: "FieldTrack",
+    template: "%s — FieldTrack",
+  },
   description: "Field workforce tracking and management",
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    // dark class as default — brand default is dark (matches logo)
+    <html lang="en" className="dark" suppressHydrationWarning>
       <body className={inter.className}>
         <Providers>{children}</Providers>
       </body>

@@ -28,22 +28,10 @@ const PAGE_SIZE = 50;
 
 function ExpenseStatusBadge({ status }: { status: ExpenseStatus }) {
   if (status === "APPROVED")
-    return (
-      <Badge className="bg-emerald-100 text-emerald-800 border-transparent dark:bg-emerald-950 dark:text-emerald-300">
-        Approved
-      </Badge>
-    );
+    return <Badge variant="success">Approved</Badge>;
   if (status === "REJECTED")
-    return (
-      <Badge className="bg-rose-100 text-rose-700 border-transparent dark:bg-rose-950 dark:text-rose-300">
-        Rejected
-      </Badge>
-    );
-  return (
-    <Badge className="bg-amber-100 text-amber-800 border-transparent dark:bg-amber-950 dark:text-amber-300">
-      Pending
-    </Badge>
-  );
+    return <Badge variant="error">Rejected</Badge>;
+  return <Badge variant="warning">Pending</Badge>;
 }
 
 function ExpenseReviewSheet({
@@ -202,9 +190,7 @@ function EmployeeExpenseRow({
 
       <div>
         {hasPending ? (
-          <Badge className="bg-amber-100 text-amber-800 border-transparent dark:bg-amber-950 dark:text-amber-300">
-            {group.pendingCount} Pending
-          </Badge>
+          <Badge variant="warning">{group.pendingCount} Pending</Badge>
         ) : (
           <span className="text-sm text-muted-foreground">—</span>
         )}

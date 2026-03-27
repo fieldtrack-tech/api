@@ -77,9 +77,9 @@ export default function AdminMonitoringPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold tracking-tight">Monitoring</h2>
-        <p className="text-muted-foreground">Control and review location monitoring sessions.</p>
+      <div className="page-header">
+        <h1 className="page-title">Monitoring</h1>
+        <p className="page-description">Control and review location monitoring sessions.</p>
       </div>
 
       {/* Controls */}
@@ -92,11 +92,11 @@ export default function AdminMonitoringPage() {
         </CardHeader>
         <CardContent className="flex items-center gap-4">
           {activeSession ? (
-            <Badge variant="default" className="bg-green-600 hover:bg-green-700">
+            <Badge variant="success">
               Active since {formatTime(activeSession.started_at)}
             </Badge>
           ) : (
-            <Badge variant="outline">Inactive</Badge>
+            <Badge variant="secondary">Inactive</Badge>
           )}
           <Button
             onClick={handleStart}
@@ -132,21 +132,21 @@ export default function AdminMonitoringPage() {
           <div className="rounded-md border">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b bg-muted/50">
-                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">Start Time</th>
-                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">End Time</th>
-                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">Duration</th>
-                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">Status</th>
+                <tr className="border-b border-border/60 bg-muted/30">
+                  <th className="px-3 py-2.5 text-left text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Start Time</th>
+                  <th className="px-3 py-2.5 text-left text-[11px] font-medium uppercase tracking-wider text-muted-foreground">End Time</th>
+                  <th className="px-3 py-2.5 text-left text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Duration</th>
+                  <th className="px-3 py-2.5 text-left text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Status</th>
                 </tr>
               </thead>
               <tbody>
                 {sessions.map((session) => (
-                  <tr key={session.id} className="border-b last:border-0">
-                    <td className="px-4 py-3">
+                  <tr key={session.id} className="border-b border-border/40 last:border-0 hover:bg-accent/50 transition-colors">
+                    <td className="px-3 py-3">
                       <div>{formatDate(session.started_at)}</div>
                       <div className="text-xs text-muted-foreground">{formatTime(session.started_at)}</div>
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-3 py-3">
                       {session.ended_at ? (
                         <>
                           <div>{formatDate(session.ended_at)}</div>
@@ -156,12 +156,12 @@ export default function AdminMonitoringPage() {
                         <span className="text-muted-foreground">—</span>
                       )}
                     </td>
-                    <td className="px-4 py-3">{formatSessionDuration(session)}</td>
-                    <td className="px-4 py-3">
+                    <td className="px-3 py-3">{formatSessionDuration(session)}</td>
+                    <td className="px-3 py-3">
                       {session.ended_at ? (
-                        <Badge variant="outline">Ended</Badge>
+                        <Badge variant="secondary">Ended</Badge>
                       ) : (
-                        <Badge variant="default" className="bg-green-600 hover:bg-green-700">Active</Badge>
+                        <Badge variant="success">Active</Badge>
                       )}
                     </td>
                   </tr>
