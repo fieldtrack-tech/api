@@ -21,6 +21,14 @@ vi.mock("../../../src/config/redis.js", () => ({
   redisConnectionOptions: {},
 }));
 
+// shouldStartWorkers must return true so the retry endpoint does not reject
+// with 503 "Workers not enabled" in test context.
+vi.mock("../../../src/workers/startup.js", () => ({
+  shouldStartWorkers: vi.fn().mockReturnValue(true),
+  areWorkersStarted: vi.fn().mockReturnValue(true),
+  startWorkers: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock("../../../src/workers/distance.queue.js", () => ({
   enqueueDistanceJob: vi.fn().mockResolvedValue(undefined),
 }));
@@ -31,10 +39,12 @@ vi.mock("../../../src/workers/analytics.queue.js", () => ({
 
 vi.mock("../../../src/workers/webhook.queue.js", () => ({
   enqueueWebhookDelivery: vi.fn().mockResolvedValue(undefined),
+  enqueueToDlq:           vi.fn().mockResolvedValue(undefined),
   WEBHOOK_QUEUE_NAME:     "webhook-delivery",
-  WEBHOOK_RETRY_DELAYS_MS: [0, 30_000, 120_000, 600_000, 3_600_000],
+  WEBHOOK_RETRY_DELAYS_MS: [0, 60_000, 300_000, 900_000, 3_600_000],
   WEBHOOK_MAX_ATTEMPTS:    5,
   getWebhookQueueDepth:   vi.fn().mockResolvedValue(0),
+  getWebhookDlqDepth:     vi.fn().mockResolvedValue(0),
 }));
 
 vi.mock("../../../src/modules/webhooks/webhooks.repository.js", () => ({
@@ -377,6 +387,23 @@ describe("Webhooks Admin API", () => {
 
       expect(res.statusCode).toBe(200);
     });
+
+    it("returns 403 for EMPLOYEE role", async () => {
+      const res = await app.inject({
+        method:  "GET",
+        url:     "/admin/webhook-deliveries",
+        headers: { authorization: `Bearer ${employeeToken}` },
+      });
+      expect(res.statusCode).toBe(403);
+    });
+
+    it("returns 401 with no token", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url:    "/admin/webhook-deliveries",
+      });
+      expect(res.statusCode).toBe(401);
+    });
   });
 
   // ─── POST /admin/webhook-deliveries/:id/retry ───────────────────────────────
@@ -435,6 +462,23 @@ describe("Webhooks Admin API", () => {
       });
 
       expect(res.statusCode).toBe(400);
+    });
+
+    it("returns 403 for EMPLOYEE role", async () => {
+      const res = await app.inject({
+        method:  "POST",
+        url:     `/admin/webhook-deliveries/${DELIVERY_ID}/retry`,
+        headers: { authorization: `Bearer ${employeeToken}` },
+      });
+      expect(res.statusCode).toBe(403);
+    });
+
+    it("returns 401 with no token", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url:    `/admin/webhook-deliveries/${DELIVERY_ID}/retry`,
+      });
+      expect(res.statusCode).toBe(401);
     });
   });
 });

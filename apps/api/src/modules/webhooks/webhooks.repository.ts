@@ -18,6 +18,9 @@ import type {
   DeliveryListQuery,
 } from "./webhooks.schema.js";
 
+const WEBHOOK_DELIVERY_COLUMNS =
+  "id, webhook_id, event_id, organization_id, status, attempt_count, response_status, response_body, last_attempt_at, next_retry_at, created_at";
+
 // ─── Webhook CRUD ─────────────────────────────────────────────────────────────
 
 export const webhooksRepository = {
@@ -112,7 +115,7 @@ export const webhooksRepository = {
     const to   = from + query.limit - 1;
 
     let q = orgTable(request, "webhook_deliveries")
-      .select("*", { count: "exact" })
+      .select(WEBHOOK_DELIVERY_COLUMNS, { count: "exact" })
       .order("created_at", { ascending: false })
       .range(from, to);
 
@@ -136,7 +139,7 @@ export const webhooksRepository = {
     deliveryId: string,
   ): Promise<WebhookDelivery | null> {
     const { data, error } = await orgTable(request, "webhook_deliveries")
-      .select("*")
+      .select(WEBHOOK_DELIVERY_COLUMNS)
       .eq("id", deliveryId)
       .limit(1)
       .maybeSingle();
@@ -172,7 +175,7 @@ export const webhooksRepository = {
     const { data, error } = await orgTable(request, "webhook_deliveries")
       .update({ status: "pending", next_retry_at: nextRetryAt })
       .eq("id", deliveryId)
-      .select("*")
+      .select(WEBHOOK_DELIVERY_COLUMNS)
       .single();
 
     if (error) throw new Error(`Failed to reset delivery: ${error.message}`);

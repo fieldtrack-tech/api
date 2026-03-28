@@ -13,8 +13,9 @@
 import type { FastifyRequest } from "fastify";
 import { webhooksRepository } from "./webhooks.repository.js";
 import { validateWebhookUrl, InvalidWebhookUrlError } from "../../utils/url-validator.js";
-import { BadRequestError, NotFoundError } from "../../utils/errors.js";
+import { BadRequestError, NotFoundError, ServiceUnavailableError } from "../../utils/errors.js";
 import { enqueueWebhookDelivery } from "../../workers/webhook.queue.js";
+import { shouldStartWorkers } from "../../workers/startup.js";
 import type {
   CreateWebhookBody,
   UpdateWebhookBody,
@@ -102,6 +103,12 @@ export const webhooksService = {
   ): Promise<WebhookDelivery> {
     const delivery = await webhooksRepository.findDeliveryById(request, deliveryId);
     if (!delivery) throw new NotFoundError("Delivery not found");
+
+    if (!shouldStartWorkers()) {
+      throw new ServiceUnavailableError(
+        "Workers not enabled — webhook delivery requires WORKERS_ENABLED=true",
+      );
+    }
 
     if (delivery.status === "pending") {
       throw new BadRequestError("Delivery is already pending — retry not needed");
