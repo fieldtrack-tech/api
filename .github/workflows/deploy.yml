@@ -257,14 +257,22 @@ jobs:
       - name: Verify Node.js runtime crypto
         run: |
           IMAGE_NAME="fieldtrack-backend:${{ steps.meta.outputs.sha_short }}"
-          OPENSSL_VERSION=$(docker run --rm "$IMAGE_NAME" node -p "process.versions.openssl" 2>&1)
-          EXIT_CODE=$?
-          if [ $EXIT_CODE -ne 0 ] || [ -z "$OPENSSL_VERSION" ]; then
-            echo "::error::Node.js OpenSSL binding check failed"
-            echo "Output: $OPENSSL_VERSION"
-            exit 1
-          fi
-          echo "✓ Runtime crypto verified: OpenSSL $OPENSSL_VERSION"
+          echo "Testing image: $IMAGE_NAME"
+          
+          # First, verify the image exists and can start
+          echo "Checking if image is available..."
+          docker images "$IMAGE_NAME" || (echo "❌ Image not found"; exit 1)
+          
+          # Test Node.js and OpenSSL binding
+          echo "Verifying Node.js runtime..."
+          docker run --rm "$IMAGE_NAME" node -e "
+            const openssl = process.versions.openssl;
+            if (!openssl) {
+              console.error('ERROR: OpenSSL not linked to Node.js runtime');
+              process.exit(1);
+            }
+            console.log('✓ OpenSSL version:', openssl);
+          "
 
       # Capture the content-addressable image digest.
       # With cache scoping and cache busting, digest should always reproduce correctly.
