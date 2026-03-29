@@ -85,7 +85,7 @@ export const expensesController = {
     } catch (error) {
       handleError(error, request, reply, "Unexpected error fetching org expenses");
     }
-  }
+  },
 
   /**
    * PATCH /admin/expenses/:id
