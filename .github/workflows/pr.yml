@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      backend: ${{ steps.filter.outputs.backend }}
+      api: ${{ steps.filter.outputs.api }}
       infra: ${{ steps.filter.outputs.infra }}
     steps:
       - uses: actions/checkout@v5
@@ -28,15 +28,15 @@ jobs:
         uses: dorny/paths-filter@v3
         with:
           filters: |
-            backend:
+            api:
               - 'apps/api/**'
               - 'packages/types/**'
             infra:
               - 'infra/**'
               - '.github/workflows/**'
 
-  backend-ci:
-    name: Backend CI
+  api-ci:
+    name: API CI
     runs-on: ubuntu-latest
     needs: detect-changes
     timeout-minutes: 15
@@ -77,31 +77,33 @@ jobs:
           echo "❌ Change detection did not succeed (result: ${{ needs.detect-changes.result }}) — cannot safely skip checks"
           exit 1
 
-      - name: Skip if no backend changes
-        if: needs.detect-changes.outputs.backend != 'true'
+      - name: Skip if no API changes
+        if: needs.detect-changes.outputs.api != 'true'
         run: |
-          echo "No backend changes — skipping all backend validation"
-          echo "✓ Backend CI (skipped)"
+          echo "No API changes — skipping all API validation"
+          echo "✓ API CI (skipped)"
           exit 0
 
       - uses: actions/checkout@v5
-        if: needs.detect-changes.outputs.backend == 'true'
+        if: needs.detect-changes.outputs.api == 'true'
 
       - uses: actions/setup-node@v5
-        if: needs.detect-changes.outputs.backend == 'true'
+        if: needs.detect-changes.outputs.api == 'true'
         with:
           node-version: '24'
           cache: npm
           cache-dependency-path: '**/package-lock.json'
 
       - run: npm ci
-        if: needs.detect-changes.outputs.backend == 'true'
+        if: needs.detect-changes.outputs.api == 'true'
       - run: npm run build -w packages/types
-        if: needs.detect-changes.outputs.backend == 'true'
-      - run: npx tsc --noEmit -p apps/api
-        if: needs.detect-changes.outputs.backend == 'true'
+        if: needs.detect-changes.outputs.api == 'true'
+      - name: TypeScript check (API)
+        if: needs.detect-changes.outputs.api == 'true'
+        run: npm run typecheck
+        working-directory: apps/api
       - name: Env contract guard (no direct process.env outside env.ts)
-        if: needs.detect-changes.outputs.backend == 'true'
+        if: needs.detect-changes.outputs.api == 'true'
         run: |
           if grep -r --include="*.ts" "process\.env" apps/api/src/ \
                | grep -v "apps/api/src/config/env\.ts"; then
@@ -111,25 +113,21 @@ jobs:
           fi
           echo "✅ Env contract clean — no direct process.env access outside env.ts"
       - name: Dependency vulnerability scan (production deps)
-        if: needs.detect-changes.outputs.backend == 'true'
+        if: needs.detect-changes.outputs.api == 'true'
         run: npm audit --omit=dev --audit-level=high
-      - name: Unit tests
-        if: needs.detect-changes.outputs.backend == 'true'
+      - name: Tests (unit + integration)
+        if: needs.detect-changes.outputs.api == 'true'
         working-directory: apps/api
-        run: npx vitest run tests/unit/
-      - name: Integration tests
-        if: needs.detect-changes.outputs.backend == 'true'
-        working-directory: apps/api
-        run: npx vitest run tests/integration/
+        run: npm test
 
       - name: Pull base images (force fresh manifest, prevent stale GHA cache)
-        if: needs.detect-changes.outputs.backend == 'true'
+        if: needs.detect-changes.outputs.api == 'true'
         run: |
           docker pull node:24.2.0-bookworm-slim
           docker pull gcr.io/distroless/nodejs24-debian12:nonroot
 
       - name: Build and validate container
-        if: needs.detect-changes.outputs.backend == 'true'
+        if: needs.detect-changes.outputs.api == 'true'
         run: |
           docker build \
             --pull \
@@ -142,7 +140,7 @@ jobs:
             .
 
       - name: Container bootstrap validation
-        if: needs.detect-changes.outputs.backend == 'true'
+        if: needs.detect-changes.outputs.api == 'true'
         run: |
           docker run -d \
             --name api-ci-test \
