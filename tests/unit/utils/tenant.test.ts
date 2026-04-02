@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { enforceTenant } from "../../../src/utils/tenant.js";
 import { tenantQuery } from "../../../src/utils/tenantQuery.js";
 import type { TenantContext } from "../../../src/utils/tenant.js";

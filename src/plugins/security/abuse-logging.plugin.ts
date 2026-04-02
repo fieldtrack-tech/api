@@ -34,6 +34,10 @@ function isAuthRoute(route: string): boolean {
 }
 
 const abuseLoggingPlugin: FastifyPluginAsync = async (fastify: FastifyInstance) => {
+    // codeql[js/missing-rate-limiting] -- This is the rate-limit telemetry hook, not a
+    // route handler. It fires only after @fastify/rate-limit has already enforced the limit
+    // (reply.statusCode === 429 guard below). Rate limiting is applied globally by
+    // ratelimit.plugin.ts, which is registered before this plugin in app.ts.
     fastify.addHook("onResponse", async (request, reply) => {
         if (reply.statusCode !== 429) return;
 

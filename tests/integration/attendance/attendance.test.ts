@@ -56,7 +56,6 @@ import {
   TEST_ORG_ID,
   TEST_ORG_ID_B,
   TEST_EMPLOYEE_ID,
-  TEST_ADMIN_ID,
   TEST_SESSION_ID,
 } from "../../setup/test-server.js";
 import { attendanceRepository } from "../../../src/modules/attendance/attendance.repository.js";

@@ -20,7 +20,7 @@
  * external services.  They operate purely on plain functions and Zod schemas.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 
 // ─── Unit under test: normalizeUrl ───────────────────────────────────────────
 

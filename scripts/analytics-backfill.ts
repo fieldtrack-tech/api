@@ -142,7 +142,6 @@ async function backfill(): Promise<void> {
 
     const batch = (data ?? []) as SessionRow[];
     if (batch.length === 0) {
-      hasMore = false;
       break;
     }
 
