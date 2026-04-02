@@ -1,5 +1,5 @@
 {
-  "name": "fieldtrack-backend",
+  "name": "fieldtrack-api",
   "version": "1.0.0",
   "description": "FieldTrack 2.0 Backend API",
   "main": "dist/server.js",

@@ -20,6 +20,7 @@ vi.mock("../../../src/modules/profile/profile.repository.js", () => ({
     getEmployeeById: vi.fn(),
     getEmployeeStats: vi.fn(),
     getEmployeeExpenseStats: vi.fn(),
+    getMetricsSnapshot: vi.fn().mockResolvedValue(null),
     updateLastActivity: vi.fn().mockResolvedValue(undefined),
   },
   computeActivityStatusFromTimestamp: vi.fn().mockReturnValue("ACTIVE"),

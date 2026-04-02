@@ -1,3 +1,12 @@
+// ⚠️  DO NOT add env variables without updating ALL of the following:
+//   - apps/api/.env.example          (developer template — every variable must appear here)
+//   - apps/api/.env.ci               (CI non-secret defaults, if the variable is CI-relevant)
+//   - docs/env-contract.md           (source-of-truth documentation table)
+//   - apps/api/scripts/validate-env.sh  (if monitoring-layer or cross-file validation needed)
+//
+// Failure to keep these in sync causes config drift, silent CI failures, and
+// environment contract violations caught only at production deploy time.
+
 /**
  * env.ts — Centralized, Zod-validated environment configuration for FieldTrack 2.0.
  *
@@ -52,6 +61,46 @@ const optionalBaseUrl = z.preprocess(
   z.string().url().optional(),
 );
 
+/**
+ * Zod schema for FRONTEND_BASE_URL — the canonical URL of the web frontend
+ * (fieldtrack-tech/web).
+ *
+ * Validation rules (enforced at process startup):
+ *   1. Must be a valid absolute URL (http:// or https://).
+ *   2. Must NOT end with a trailing slash — normalizeUrl strips one if present,
+ *      and the explicit refine below asserts the contract is visible in code.
+ *   3. Optional outside production — required in production via superRefine.
+ *
+ * Used ONLY for:
+ *   - Password-reset email links:  `${FRONTEND_BASE_URL}/reset-password?token=…`
+ *   - Invitation email links:      `${FRONTEND_BASE_URL}/accept-invite?token=…`
+ *   - User-facing redirects that land the user in the UI
+ *
+ * NOT used for:
+ *   - API routing or CORS (use CORS_ORIGIN for that)
+ *   - Internal service-to-service calls
+ *   - Server-side proxy targets
+ */
+const frontendBaseUrl = z.preprocess(
+  (val) =>
+    typeof val === "string" && val.trim().length > 0
+      ? normalizeUrl(val.trim())
+      : undefined,
+  z
+    .string()
+    .url({ message: "FRONTEND_BASE_URL must be a valid absolute URL (e.g. https://app.getfieldtrack.app)" })
+    .refine(
+      (url) => !url.endsWith("/"),
+      {
+        message:
+          "FRONTEND_BASE_URL must not end with a trailing slash. " +
+          "Correct: https://app.getfieldtrack.app — " +
+          "Incorrect: https://app.getfieldtrack.app/",
+      },
+    )
+    .optional(),
+);
+
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
 const envSchema = z
@@ -83,7 +132,7 @@ const envSchema = z
      * Falls back to NODE_ENV for backward compatibility with existing deployments
      * that only set NODE_ENV (e.g. the Dockerfile bakes NODE_ENV=production).
      *
-     * Valid values: development | staging | production | test
+     * Valid values: development | staging | production | test | ci
      */
     APP_ENV: z.preprocess(
       (val) =>
@@ -156,9 +205,9 @@ const envSchema = z
      * Required in production — startup fails if absent when APP_ENV=production.
      *
      * Format: full URL including protocol, no trailing slash.
-     * Example: https://app.fieldtrack.com
+     * Example: https://app.getfieldtrack.app
      */
-    FRONTEND_BASE_URL: optionalBaseUrl,
+    FRONTEND_BASE_URL: frontendBaseUrl,
 
     // ── CORS ──────────────────────────────────────────────────────────────────
 
@@ -237,7 +286,7 @@ const envSchema = z
     /**
      * OTLP HTTP endpoint for exporting traces to Grafana Tempo.
      *
-     * Default resolves via Docker service name on fieldtrack_network.
+     * Default resolves via Docker service name on api_network.
      * Override for non-Docker deployments, external Tempo, or cloud OTLP ingest.
      *
      * Note: bare Docker service hostnames (e.g. "tempo") are intentionally
@@ -263,7 +312,7 @@ const envSchema = z
      * Appears as the service label in Grafana Tempo / service graph.
      * Change per deployment if running multiple environments in one Tempo instance.
      */
-    SERVICE_NAME: z.string().default("fieldtrack-backend"),
+    SERVICE_NAME: z.string().default("fieldtrack-api"),
 
     /**
      * Git commit SHA injected by GitHub Actions.
@@ -446,7 +495,7 @@ const envSchema = z
       });
     }
 
-    // 4. Open CORS in production leaks credentials to any origin.
+    // 3. Open CORS in production leaks credentials to any origin.
     if (isProd && !data.CORS_ORIGIN.trim()) {
       ctx.addIssue({
         code: "custom",
@@ -458,7 +507,7 @@ const envSchema = z
       });
     }
 
-    // 5. APP_BASE_URL is the canonical root for all absolute link generation.
+    // 4. APP_BASE_URL is the canonical root for all absolute link generation.
     if (isProd && !data.APP_BASE_URL) {
       ctx.addIssue({
         code: "custom",
@@ -470,7 +519,7 @@ const envSchema = z
       });
     }
 
-    // 6. API_BASE_URL is needed for accurate OpenAPI documentation and any
+    // 5. API_BASE_URL is needed for accurate OpenAPI documentation and any
     //    server-generated absolute links that reference the API itself.
     if (isProd && !data.API_BASE_URL) {
       ctx.addIssue({
@@ -483,7 +532,7 @@ const envSchema = z
       });
     }
 
-    // 7. FRONTEND_BASE_URL is required in production for email link generation.
+    // 6. FRONTEND_BASE_URL is required in production for email link generation.
     //    Reset-password and invitation emails become broken without it.
     if (isProd && !data.FRONTEND_BASE_URL) {
       ctx.addIssue({
@@ -496,7 +545,7 @@ const envSchema = z
       });
     }
 
-    // 8. WORKERS_ENABLED must be explicitly true in production.
+    // 7. WORKERS_ENABLED must be explicitly true in production.
     //    Production always has Redis provisioned; a mis-configured production
     //    container that skips workers silently would be a serious oversight.
     if (isProd && !data.WORKERS_ENABLED) {

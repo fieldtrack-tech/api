@@ -2,7 +2,7 @@
 
 > Production-grade multi-tenant backend for real-time field workforce tracking — attendance, GPS, expense management, and admin analytics.
 
-[![CI](https://github.com/fieldtrack-tech/fieldtrack-2.0/actions/workflows/deploy.yml/badge.svg)](https://github.com/fieldtrack-tech/fieldtrack-2.0/actions/workflows/deploy.yml)
+[![CI](https://github.com/fieldtrack-tech/api/actions/workflows/deploy.yml/badge.svg)](https://github.com/fieldtrack-tech/api/actions/workflows/deploy.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D24-brightgreen)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue)](https://www.typescriptlang.org)
@@ -102,12 +102,11 @@ FieldTrack 2.0 is a production-ready REST API backend for managing field workfor
 
 ```bash
 # 1. Install dependencies
-cd backend
 npm install
 
 # 2. Configure environment
-cp .env.example .env
-# Edit .env — fill in Supabase URL, keys, Redis URL, and ALLOWED_ORIGINS
+cp apps/api/.env.example apps/api/.env
+# Edit apps/api/.env — fill in Supabase URL, keys, Redis URL, and ALLOWED_ORIGINS
 
 # 3. Run in development mode
 npm run dev
@@ -142,8 +141,10 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for full setup instructions includi
 
 ## Project Structure
 
+> **Note:** The web frontend is maintained in a separate repository: [fieldtrack-tech/web](https://github.com/fieldtrack-tech/web)
+
 ```
-FieldTrack-2.0/
+api/
 ├── apps/api/              # Fastify + TypeScript backend
 │   ├── src/               # Application source
 │   │   ├── modules/       # Domain modules (attendance · locations · expenses · analytics)

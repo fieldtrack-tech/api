@@ -5,7 +5,7 @@
 //
 // Traces are shipped via OTLP HTTP to Grafana Tempo on the shared Docker
 // network. View them in: Grafana → Explore → Tempo → Search traces
-// Filter by service.name = env.SERVICE_NAME (default: "fieldtrack-backend")
+// Filter by service.name = env.SERVICE_NAME (default: "fieldtrack-api")
 
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";

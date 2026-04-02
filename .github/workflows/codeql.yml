@@ -52,10 +52,6 @@ jobs:
       - name: Build API
         run: npm run build -w apps/api || true
 
-      # (optional but useful)
-      - name: Build Web
-        run: npm run build -w apps/web || true
-
       # ✅ Initialize CodeQL AFTER dependencies
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4

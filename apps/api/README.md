@@ -83,10 +83,10 @@ src/
 
 ```bash
 # Build image
-docker build -t fieldtrack-backend .
+docker build -t fieldtrack-api .
 
 # Run container
-docker run -p 3000:3000 --env-file .env fieldtrack-backend
+docker run -p 3000:3000 --env-file .env fieldtrack-api
 ```
 
 ## API Endpoints

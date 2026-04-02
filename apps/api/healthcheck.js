@@ -3,7 +3,7 @@
 // Exits 0 when /health returns HTTP 200, exits 1 on any error or non-200 response.
 //
 // CommonJS (not ESM) — this file is copied to /app/healthcheck.js in the
-// container where the monorepo root package.json (no "type":"module") applies.
+// container where the repo root package.json (no "type":"module") applies.
 'use strict';
 const http = require('http');
 

@@ -1,4 +1,4 @@
-# Contributing to FieldTrack 2.0
+# Contributing to FieldTrack API
 
 ---
 
@@ -7,8 +7,8 @@
 **Prerequisites:** Node.js ≥ 24, npm, Redis
 
 ```bash
-git clone https://github.com/fieldtrack-tech/fieldtrack-2.0.git
-cd fieldtrack-2.0
+git clone https://github.com/fieldtrack-tech/api.git
+cd api
 
 npm install
 cp apps/api/.env.example apps/api/.env
@@ -83,8 +83,6 @@ chore(deps): bump @fastify/jwt to 9.1.0
    ```bash
    npm run typecheck -w apps/api
    npm run test -w apps/api
-   npm run type-check -w apps/web   # if frontend changed
-   npm run build -w apps/web        # if frontend changed
    ```
 
 4. Commit with a conventional commit message (see format above).

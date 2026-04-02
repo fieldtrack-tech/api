@@ -207,8 +207,8 @@ else
     REQUIRED_MON_VARS=(
         API_HOSTNAME
         METRICS_SCRAPE_TOKEN
-        FRONTEND_DOMAIN
         GRAFANA_ADMIN_PASSWORD
+        ALERTMANAGER_SLACK_WEBHOOK
     )
     for var in "${REQUIRED_MON_VARS[@]}"; do
         val="$(get_val "$var" "$MONITORING_ENV_FILE")"
@@ -218,6 +218,16 @@ else
             pass "$var is set in .env.monitoring"
         fi
     done
+
+    # Optional hardening: Slack webhook must be a valid Slack incoming webhook URL.
+    SLACK_WEBHOOK="$(get_val "ALERTMANAGER_SLACK_WEBHOOK" "$MONITORING_ENV_FILE")"
+    if [[ -z "$SLACK_WEBHOOK" ]]; then
+        fail "ALERTMANAGER_SLACK_WEBHOOK not set in infra/.env.monitoring"
+    elif [[ ! "$SLACK_WEBHOOK" =~ ^https://hooks.slack.com/ ]]; then
+        fail "ALERTMANAGER_SLACK_WEBHOOK is not a valid Slack webhook URL"
+    else
+        pass "ALERTMANAGER_SLACK_WEBHOOK is valid"
+    fi
 
     # Cross-check 1: API_HOSTNAME must match the hostname derived from API_BASE_URL
     MON_HOSTNAME="$(get_val "API_HOSTNAME" "$MONITORING_ENV_FILE")"

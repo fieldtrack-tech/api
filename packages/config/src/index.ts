@@ -2,7 +2,7 @@
  * @fieldtrack/config — Environment Contract for FieldTrack 2.0
  *
  * Single source of truth for ALL environment variable names, purposes,
- * and layer ownership across the entire monorepo.
+ * and layer ownership across this backend repository.
  *
  * Layer model:
  *
@@ -14,16 +14,10 @@
  *   │                 │  FRONTEND_BASE_URL          │  External URL   │
  *   │                 │  PORT, CORS_ORIGIN, …       │  Internal       │
  *   ├─────────────────┼─────────────────────────────┼─────────────────┤
- *   │  Frontend (web) │  NEXT_PUBLIC_API_BASE_URL   │  External URL   │
- *   │                 │  NEXT_PUBLIC_SUPABASE_URL   │  External URL   │
- *   │                 │  NEXT_PUBLIC_SUPABASE_ANON_KEY               │
- *   │                 │  NEXT_PUBLIC_MAPBOX_TOKEN   │  Client-side    │
- *   ├─────────────────┼─────────────────────────────┼─────────────────┤
  *   │  CI / Scripts   │  API_BASE_URL               │  External URL   │
  *   │                 │  CORS_ORIGIN                │  Deploy config  │
  *   ├─────────────────┼─────────────────────────────┼─────────────────┤
  *   │  Infra          │  API_HOSTNAME               │  Domain only    │
- *   │                 │  FRONTEND_DOMAIN            │  Domain only    │
  *   │                 │  METRICS_SCRAPE_TOKEN       │  Security       │
  *   │                 │  GRAFANA_ADMIN_PASSWORD     │  Security       │
  *   └─────────────────┴─────────────────────────────┴─────────────────┘
@@ -36,18 +30,17 @@
  *   2. Variables ending in _HOSTNAME hold a bare domain with no scheme or path.
  *      Example: api.getfieldtrack.app
  *
- *   3. NEXT_PUBLIC_* prefix is reserved for Next.js browser-exposed variables.
- *
- *   4. API_BASE_URL is the canonical external API URL used by all layers.
+ *   3. API_BASE_URL is the canonical external API URL used by all layers.
  *      - Backend:  loaded from .env, required in production
  *      - Scripts:  exported by load-env.sh, used by smoke-test.sh
  *      - CI:       passed as GitHub secret API_BASE_URL
  *
- *   5. API_HOSTNAME is always DERIVED from API_BASE_URL at deploy-time.
+ *   4. API_HOSTNAME is always DERIVED from API_BASE_URL at deploy-time.
  *      It MUST NOT be set directly in apps/api/.env.
  *
- *   6. The frontend uses NEXT_PUBLIC_API_BASE_URL (not API_BASE_URL) because
- *      Next.js bakes NEXT_PUBLIC_* at build time via static replacement.
+ *   5. FRONTEND_BASE_URL is the public URL of the web frontend (maintained in
+ *      a separate repository: fieldtrack-tech/web). Used by the API to build
+ *      password-reset and invitation email links.
  *
  * Usage:
  *   import { ENV_VARS, EnvLayerContract } from "@fieldtrack/config";
@@ -92,7 +85,19 @@ export interface BackendEnvContract {
   // External URLs (full URL, no trailing slash)
   APP_BASE_URL?: string;      // Canonical app URL for link generation
   API_BASE_URL?: string;      // This API's public URL (EXTERNAL)
-  FRONTEND_BASE_URL?: string; // Frontend URL for email links (EXTERNAL)
+  /**
+   * Public URL of the web frontend (fieldtrack-tech/web).
+   *
+   * Single canonical variable \u2014 no aliases.
+   *
+   * Used ONLY for:
+   *   - Password-reset email links
+   *   - Invitation email links
+   *   - User-facing redirects
+   *
+   * Validation: valid absolute URL, no trailing slash. Required in production.
+   */
+  FRONTEND_BASE_URL?: string;  // Frontend URL for email links (EXTERNAL)
 
   // CORS
   CORS_ORIGIN: string;
@@ -127,23 +132,6 @@ export interface BackendEnvContract {
 }
 
 /**
- * Frontend environment contract (apps/web).
- *
- * All variables validated by apps/web/src/lib/env.ts.
- * NEXT_PUBLIC_* variables are baked in at Next.js build time.
- */
-export interface FrontendEnvContract {
-  // The public URL of the backend API — full URL or root-relative proxy path.
-  // Full URL:  https://api.getfieldtrack.app  (browser calls API directly)
-  // Relative:  /api/proxy                     (browser routes via Next.js proxy)
-  NEXT_PUBLIC_API_BASE_URL: string;
-
-  NEXT_PUBLIC_SUPABASE_URL: string;
-  NEXT_PUBLIC_SUPABASE_ANON_KEY: string;
-  NEXT_PUBLIC_MAPBOX_TOKEN: string;
-}
-
-/**
  * Infra monitoring environment contract (infra/.env.monitoring).
  *
  * Used by Docker Compose for Prometheus, Grafana, Nginx, Blackbox.
@@ -152,10 +140,6 @@ export interface InfraEnvContract {
   // Domain only — no scheme, no path. Derived from API_BASE_URL.
   // Example: api.getfieldtrack.app
   API_HOSTNAME: string;
-
-  // Domain only for the frontend application.
-  // Example: app.getfieldtrack.app
-  FRONTEND_DOMAIN: string;
 
   GRAFANA_ADMIN_PASSWORD: string;
 
@@ -235,15 +219,8 @@ export const ENV_VARS = {
   ANALYTICS_WORKER_CONCURRENCY: "ANALYTICS_WORKER_CONCURRENCY",
   WORKERS_ENABLED:              "WORKERS_ENABLED",
 
-  // ── Frontend (NEXT_PUBLIC_*) ───────────────────────────────────────────────
-  NEXT_PUBLIC_API_BASE_URL:      "NEXT_PUBLIC_API_BASE_URL",
-  NEXT_PUBLIC_SUPABASE_URL:      "NEXT_PUBLIC_SUPABASE_URL",
-  NEXT_PUBLIC_SUPABASE_ANON_KEY: "NEXT_PUBLIC_SUPABASE_ANON_KEY",
-  NEXT_PUBLIC_MAPBOX_TOKEN:      "NEXT_PUBLIC_MAPBOX_TOKEN",
-
   // ── Infra-only ────────────────────────────────────────────────────────────
   API_HOSTNAME:            "API_HOSTNAME",
-  FRONTEND_DOMAIN:         "FRONTEND_DOMAIN",
   GRAFANA_ADMIN_PASSWORD:  "GRAFANA_ADMIN_PASSWORD",
 } as const;
 

@@ -32,6 +32,7 @@ vi.mock("../../../src/modules/expenses/expenses.repository.js", () => ({
     findExpenseById: vi.fn(),
     findExpensesByUser: vi.fn(),
     findExpensesByOrg: vi.fn(),
+    findPendingFromSnapshot: vi.fn().mockResolvedValue({ data: [], total: 0, source: "fallback" }),
     updateExpenseStatus: vi.fn(),
     findExpenseSummaryByEmployee: vi.fn(),
   },

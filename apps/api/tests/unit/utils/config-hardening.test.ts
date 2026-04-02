@@ -13,6 +13,8 @@
  *   8. privateEnv   — contains secret fields; publicEnv does NOT
  *   9. logStartupConfig  — calls logger.info exactly once with safe payload
  *  10. APP_BASE_URL — optional field present in schema, required in production
+ *  11. General env object invariants
+ *  12. FRONTEND_BASE_URL — trailing-slash contract and usage rules
  *
  * These tests are intentionally isolated from the database, Redis, and any
  * external services.  They operate purely on plain functions and Zod schemas.
@@ -693,3 +695,108 @@ describe("env object — general invariants", () => {
     expect(env.WORKER_CONCURRENCY).toBeGreaterThanOrEqual(1);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 12. FRONTEND_BASE_URL — trailing-slash contract and usage rules
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// FRONTEND_BASE_URL is the single canonical variable for the web frontend URL
+// (fieldtrack-tech/web).  Used exclusively to build email links and
+// user-facing redirects — NOT for CORS, API routing, or service-to-service.
+//
+// Validation rules (defined in env.ts via the frontendBaseUrl schema):
+//   1. Must be a valid absolute URL (http:// or https://)
+//   2. Must NOT end with a trailing slash
+//   3. Trailing slashes are stripped by normalizeUrl in the preprocessor
+//   4. Optional in non-production; required in production via superRefine
+
+describe("FRONTEND_BASE_URL — trailing-slash contract", () => {
+  // Mirror the frontendBaseUrl schema from env.ts to test it in isolation.
+  const frontendBaseUrl = z.preprocess(
+    (val) =>
+      typeof val === "string" && val.trim().length > 0
+        ? normalizeUrl(val.trim())
+        : undefined,
+    z
+      .string()
+      .url()
+      .refine(
+        (url) => !url.endsWith("/"),
+        { message: "FRONTEND_BASE_URL must not end with a trailing slash" },
+      )
+      .optional(),
+  );
+
+  it("accepts a clean production URL", () => {
+    expect(frontendBaseUrl.parse("https://app.getfieldtrack.app")).toBe(
+      "https://app.getfieldtrack.app",
+    );
+  });
+
+  it("strips a trailing slash and the refine passes", () => {
+    expect(frontendBaseUrl.parse("https://app.getfieldtrack.app/")).toBe(
+      "https://app.getfieldtrack.app",
+    );
+  });
+
+  it("strips multiple trailing slashes and the refine passes", () => {
+    expect(frontendBaseUrl.parse("https://app.getfieldtrack.app///")).toBe(
+      "https://app.getfieldtrack.app",
+    );
+  });
+
+  it("accepts a localhost URL in dev/test", () => {
+    expect(frontendBaseUrl.parse("http://localhost:3000")).toBe(
+      "http://localhost:3000",
+    );
+  });
+
+  it("strips trailing slash from localhost URL", () => {
+    expect(frontendBaseUrl.parse("http://localhost:3000/")).toBe(
+      "http://localhost:3000",
+    );
+  });
+
+  it("yields undefined for an empty string (unset in dev/CI)", () => {
+    expect(frontendBaseUrl.parse("")).toBeUndefined();
+  });
+
+  it("yields undefined for a whitespace-only string", () => {
+    expect(frontendBaseUrl.parse("   ")).toBeUndefined();
+  });
+
+  it("yields undefined for undefined (unset in dev/CI)", () => {
+    expect(frontendBaseUrl.parse(undefined)).toBeUndefined();
+  });
+
+  it("rejects a non-URL string", () => {
+    expect(() => frontendBaseUrl.parse("not-a-url")).toThrow();
+  });
+
+  it("path concatenation is safe after normalisation — no double slash", () => {
+    const base = frontendBaseUrl.parse("https://app.getfieldtrack.app/") as string;
+    const resetLink = `${base}/reset-password?token=abc`;
+    expect(resetLink).toBe("https://app.getfieldtrack.app/reset-password?token=abc");
+    expect(resetLink).not.toContain("//reset");
+  });
+
+  it("path concatenation is safe for invite links", () => {
+    const base = frontendBaseUrl.parse("https://app.getfieldtrack.app") as string;
+    const inviteLink = `${base}/accept-invite?token=xyz`;
+    expect(inviteLink).toBe("https://app.getfieldtrack.app/accept-invite?token=xyz");
+    expect(inviteLink).not.toContain("//accept");
+  });
+
+  it("live env.FRONTEND_BASE_URL does not end with a trailing slash (if set)", () => {
+    if (env.FRONTEND_BASE_URL !== undefined) {
+      expect(env.FRONTEND_BASE_URL).not.toMatch(/\/$/);
+    }
+  });
+
+  it("live env.FRONTEND_BASE_URL is accessible and is string | undefined", () => {
+    expect(
+      env.FRONTEND_BASE_URL === undefined || typeof env.FRONTEND_BASE_URL === "string",
+    ).toBe(true);
+  });
+});
+

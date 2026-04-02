@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "private": true,
-  "description": "Shared API contract types for FieldTrack — single source of truth for frontend and backend.",
+  "description": "Shared API contract types for FieldTrack — single source of truth for all API consumers.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

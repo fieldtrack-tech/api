@@ -1,6 +1,6 @@
-# FieldTrack 2.0 — Observability Architecture
+# FieldTrack API — Observability Architecture
 
-This document describes the monitoring, logging, and metrics systems in FieldTrack 2.0 and how they fit together in production.
+This document describes the monitoring, logging, and metrics systems in FieldTrack API and how they fit together in production.
 
 ---
 
@@ -11,15 +11,15 @@ This document describes the monitoring, logging, and metrics systems in FieldTra
                           │               VPS (single host)                 │
                           │                                                 │
   Browser / Client        │  Nginx (public)                                 │
-       │                  │    ├─ /         → backend-blue:3000             │
-       │ HTTPS            │    │             or backend-green:3000          │
+       │                  │    ├─ /         → api-blue:3000             │
+       │ HTTPS            │    │             or api-green:3000          │
        └─────────────────►│    └─ /monitor/ → 127.0.0.1:3333 (Grafana)    │
                           │                                                 │
                           │  ┌──────────────────────────────────────────┐   │
-                          │  │          fieldtrack_network (Docker)     │   │
+                          │  │          api_network (Docker)     │   │
                           │  │                                          │   │
-                          │  │  backend-blue:3000  ──────────────────┐  │   │
-                          │  │  backend-green:3000 ── /metrics ──────┼──┼──►│ Prometheus
+                          │  │  api-blue:3000  ──────────────────┐  │   │
+                          │  │  api-green:3000 ── /metrics ──────┼──┼──►│ Prometheus
                           │  │                                        │  │   │ 127.0.0.1:9090
                           │  │  node-exporter:9100  ─── /metrics ───┘  │   │
                           │  │                                          │   │
@@ -42,8 +42,8 @@ This document describes the monitoring, logging, and metrics systems in FieldTra
 
 ```
 Prometheus (every 15 s)
-  ├─ GET backend-blue:3000/metrics   [x-metrics-token: <token>]
-  ├─ GET backend-green:3000/metrics  [x-metrics-token: <token>]  ← inactive = DOWN (expected)
+  ├─ GET api-blue:3000/metrics   [x-metrics-token: <token>]
+  ├─ GET api-green:3000/metrics  [x-metrics-token: <token>]  ← inactive = DOWN (expected)
   ├─ GET node-exporter:9100/metrics  [no auth — host-internal only]
   └─ GET localhost:9090/metrics      [self-monitoring]
 ```
@@ -169,7 +169,7 @@ Pre-built dashboards are stored in [infra/grafana/dashboards/](../infra/grafana/
 
 ## Container Services
 
-All services run inside the `fieldtrack_network` Docker bridge network.
+All services run inside the `api_network` Docker bridge network.
 
 | Container | Image | Bound port | Role |
 |-----------|-------|------------|------|
@@ -226,7 +226,7 @@ The last-known hash is stored at `~/.fieldtrack-monitoring-hash`. If the new has
 
 | Control | Detail |
 |---------|--------|
-| `/metrics` blocked at Nginx | `location /metrics { return 403; }` — scraping is only possible from inside `fieldtrack_network` |
+| `/metrics` blocked at Nginx | `location /metrics { return 403; }` — scraping is only possible from inside `api_network` |
 | Prometheus token auth | `x-metrics-token` header required; value stored in `METRICS_SCRAPE_TOKEN` env var |
 | Grafana not publicly listed | Accessible only at `/monitor/`; no signup |
 | Monitoring ports loopback-bound | Prometheus `:9090` and Grafana `:3333` bound to `127.0.0.1`; not accessible externally |
@@ -235,7 +235,7 @@ The last-known hash is stored at `~/.fieldtrack-monitoring-hash`. If the new has
 
 ---
 
-## Alerting (Planned)
+## Alerting (Deployed)
 
 The [infra/prometheus/alerts.yml](../infra/prometheus/alerts.yml) file defines alerting rules. Prometheus loads it via:
 
@@ -244,7 +244,7 @@ rule_files:
   - alerts.yml
 ```
 
-Alertmanager integration has **not yet been deployed**. When ready, add an `alerting:` block to [infra/prometheus/prometheus.yml](../infra/prometheus/prometheus.yml):
+Alertmanager is now deployed in [infra/docker-compose.monitoring.yml](../infra/docker-compose.monitoring.yml) and configured in [infra/prometheus/prometheus.yml](../infra/prometheus/prometheus.yml):
 
 ```yaml
 alerting:
@@ -254,7 +254,14 @@ alerting:
             - alertmanager:9093
 ```
 
-And extend [infra/docker-compose.monitoring.yml](../infra/docker-compose.monitoring.yml) with the Alertmanager service.
+Alertmanager is configured at [infra/alertmanager/alertmanager.yml](../infra/alertmanager/alertmanager.yml), and Slack webhook is loaded from `infra/.env.monitoring` (ALERTMANAGER_SLACK_WEBHOOK).
+
+Alerting now uses Slack only. Set this in `infra/.env.monitoring` with a valid Slack incoming webhook endpoint:
+
+- `ALERTMANAGER_SLACK_WEBHOOK`
+
+Then redeploy the monitoring stack.
+
 
 ---
 

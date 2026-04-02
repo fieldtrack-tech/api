@@ -1,4 +1,4 @@
-# Root .dockerignore — used when Docker build context is the monorepo root
+# Root .dockerignore — used when Docker build context is the repo root
 
 # Version control
 .git
@@ -8,10 +8,6 @@
 node_modules
 apps/*/node_modules
 packages/*/node_modules
-
-# Frontend — exclude all web source, but keep package.json for workspace resolution
-apps/web/**
-!apps/web/package.json
 
 # Build artefacts (Docker regenerates these)
 apps/api/dist

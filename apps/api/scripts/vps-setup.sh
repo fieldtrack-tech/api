@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================================
-# FieldTrack 2.0 — VPS Setup Script
+# FieldTrack API — VPS Setup Script
 # ============================================================================
 #
 # Deterministic first-time setup for a fresh Ubuntu 22.04/24.04 VPS.
@@ -21,15 +21,14 @@ set -euo pipefail
 
 # ── Configuration (EDIT THESE) ─────────────────────────────────────────────────
 DOMAIN="api.getfieldtrack.app"               # Production API domain
-FRONTEND_DOMAIN="app.getfieldtrack.app"      # Production frontend domain
 GH_USER="fieldtrack-tech"                    # GitHub org name
 GH_PAT=""                                   # GitHub Personal Access Token (packages:read)
 DEPLOY_USER="ashish"                        # Non-root user for deployment
 DEPLOY_USER_SSH_PUBLIC_KEY=""               # Required public key for deploy user (ssh-ed25519 ...)
-REPO_URL="https://github.com/fieldtrack-tech/fieldtrack-2.0.git"
-REPO_DIR="/home/${DEPLOY_USER}/FieldTrack-2.0"
-NETWORK="fieldtrack_network"
-NGINX_SITE_LINK="/etc/nginx/conf.d/fieldtrack.conf"
+REPO_URL="https://github.com/fieldtrack-tech/api.git"
+REPO_DIR="/api"
+NETWORK="api_network"
+NGINX_SITE_LINK="/etc/nginx/conf.d/api.conf"
 
 # ── Colour output ─────────────────────────────────────────────────────────────
 GREEN='\033[0;32m'
@@ -43,14 +42,13 @@ err()  { echo -e "${RED}[✗]${NC} $1"; exit 1; }
 
 render_nginx_ssl_config() {
     local target_file="$1"
-    cp "$REPO_DIR/infra/nginx/fieldtrack.conf" "$target_file"
+    cp "$REPO_DIR/infra/nginx/api.conf" "$target_file"
     sed -i "s|__API_HOSTNAME__|$DOMAIN|g" "$target_file"
-    sed -i "s|__FRONTEND_DOMAIN__|$FRONTEND_DOMAIN|g" "$target_file"
 }
 
 echo ""
 echo "============================================="
-echo "  FieldTrack 2.0 — VPS Setup"
+echo "  FieldTrack API — VPS Setup"
 echo "============================================="
 echo ""
 
@@ -274,7 +272,7 @@ rm -f /etc/nginx/conf.d/default
 
 mkdir -p /var/www/certbot
 
-BOOTSTRAP_NGINX_CONF="/tmp/fieldtrack-bootstrap-http.conf"
+BOOTSTRAP_NGINX_CONF="/tmp/api-bootstrap-http.conf"
 cat > "$BOOTSTRAP_NGINX_CONF" << EOF
 server {
     listen 80;
@@ -284,7 +282,7 @@ server {
         root /var/www/certbot;
     }
     location / {
-        return 200 'FieldTrack bootstrap HTTP mode';
+        return 200 'API bootstrap HTTP mode';
         add_header Content-Type text/plain;
     }
 }
@@ -362,7 +360,7 @@ log "Monitoring stack started (Prometheus, Grafana, Node Exporter)"
 log "Phase 15: Pulling and starting initial backend container..."
 
 # Pull the latest image
-sudo -u "$DEPLOY_USER" docker pull ghcr.io/fieldtrack-tech/fieldtrack-backend:latest
+sudo -u "$DEPLOY_USER" docker pull ghcr.io/fieldtrack-tech/api:latest
 
 # Start the blue container as initial deployment
 if [ -f "$ENV_FILE" ] && grep -q "SUPABASE_URL=your-" "$ENV_FILE"; then
@@ -371,14 +369,14 @@ if [ -f "$ENV_FILE" ] && grep -q "SUPABASE_URL=your-" "$ENV_FILE"; then
     warn "  cd $REPO_DIR/apps/api && ./scripts/deploy-bluegreen.sh latest"
 else
     sudo -u "$DEPLOY_USER" docker run -d \
-        --name backend-blue \
+        --name api-blue \
         --network "$NETWORK" \
         -p "127.0.0.1:3001:3000" \
         --restart unless-stopped \
         --env-file "$ENV_FILE" \
-        ghcr.io/fieldtrack-tech/fieldtrack-backend:latest
+        ghcr.io/fieldtrack-tech/api:latest
 
-    log "Backend container (backend-blue) started on 127.0.0.1:3001."
+    log "Backend container (api-blue) started on 127.0.0.1:3001."
 fi
 
 # ============================================================================
@@ -400,7 +398,7 @@ log "SSH hardened (root login disabled, password auth disabled)."
 # ============================================================================
 echo ""
 echo "============================================="
-echo "  FieldTrack 2.0 — VPS Setup Complete"
+echo "  FieldTrack API — VPS Setup Complete"
 echo "============================================="
 echo ""
 echo "  Next steps:"

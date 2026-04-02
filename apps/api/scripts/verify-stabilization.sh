@@ -190,14 +190,14 @@ echo ""
 echo "TEST 5: Rollback guard"
 echo "---------------------"
 
-if grep -q "FIELDTRACK_ROLLBACK_IN_PROGRESS" "$SCRIPT_DIR/rollback.sh"; then
-    pass "rollback.sh sets FIELDTRACK_ROLLBACK_IN_PROGRESS guard"
+if grep -q "API_ROLLBACK_IN_PROGRESS" "$SCRIPT_DIR/rollback.sh"; then
+    pass "rollback.sh sets API_ROLLBACK_IN_PROGRESS guard"
 else
     fail "rollback.sh missing rollback guard"
 fi
 
-if grep -q "FIELDTRACK_ROLLBACK_IN_PROGRESS" "$SCRIPT_DIR/deploy-bluegreen.sh"; then
-    pass "deploy-bluegreen.sh checks FIELDTRACK_ROLLBACK_IN_PROGRESS"
+if grep -q "API_ROLLBACK_IN_PROGRESS" "$SCRIPT_DIR/deploy-bluegreen.sh"; then
+    pass "deploy-bluegreen.sh checks API_ROLLBACK_IN_PROGRESS"
 else
     fail "deploy-bluegreen.sh missing rollback guard check"
 fi

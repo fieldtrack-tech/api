@@ -40,8 +40,6 @@ Closes #
 
 - [ ] `npm run typecheck -w apps/api` passes
 - [ ] `npm run test -w apps/api` passes
-- [ ] `npm run type-check -w apps/web` passes (if frontend changed)
-- [ ] `npm run build -w apps/web` passes (if frontend changed)
 - [ ] Integration tests pass locally
 - [ ] Manually tested the changed flows end-to-end
 - [ ] No special deployment steps required

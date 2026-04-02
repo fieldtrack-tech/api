@@ -54,9 +54,9 @@ echo ""
 
 # Validate that the rollback image exists in the registry
 echo "Validating rollback image exists..."
-if ! docker manifest inspect "ghcr.io/fieldtrack-tech/fieldtrack-backend:$PREVIOUS_SHA" >/dev/null 2>&1; then
+if ! docker manifest inspect "ghcr.io/fieldtrack-tech/api:$PREVIOUS_SHA" >/dev/null 2>&1; then
     echo "ERROR: Rollback image not found in registry."
-    echo "Image: ghcr.io/fieldtrack-tech/fieldtrack-backend:$PREVIOUS_SHA"
+    echo "Image: ghcr.io/fieldtrack-tech/api:$PREVIOUS_SHA"
     echo "Cannot proceed with rollback to non-existent image."
     exit 1
 fi
@@ -80,7 +80,7 @@ echo "Starting rollback to: $PREVIOUS_SHA"
 echo ""
 
 # Set guard to prevent infinite rollback loops
-export FIELDTRACK_ROLLBACK_IN_PROGRESS=1
+export API_ROLLBACK_IN_PROGRESS=1
 
 # Attempt rollback deploy
 if ! "$SCRIPT_DIR/deploy-bluegreen.sh" "$PREVIOUS_SHA"; then
@@ -93,7 +93,7 @@ if ! "$SCRIPT_DIR/deploy-bluegreen.sh" "$PREVIOUS_SHA"; then
     echo "SYSTEM STATE SNAPSHOT:"
     echo "  Active containers:"
     docker ps --format '  {{.Names}} → {{.Status}} ({{.Ports}})' 2>/dev/null || echo "  (docker ps failed)"
-    echo "  Active slot file: $(cat "/var/run/fieldtrack/active-slot" 2>/dev/null || echo 'MISSING')"
+    echo "  Active slot file: $(cat "/var/run/api/active-slot" 2>/dev/null || echo 'MISSING')"
     echo "  Nginx config test: $(sudo nginx -t 2>&1)"
     echo ""
     echo "Target SHA:    $PREVIOUS_SHA"
@@ -101,7 +101,7 @@ if ! "$SCRIPT_DIR/deploy-bluegreen.sh" "$PREVIOUS_SHA"; then
     echo "Action required:"
     echo "  1. Check container status: docker ps -a"
     echo "  2. Check nginx config: sudo nginx -t"
-    echo "  3. Review logs: docker logs backend-blue backend-green"
+    echo "  3. Review logs: docker logs api-blue api-green"
     echo "  4. Manually restore last known good state"
     echo "========================================="
     exit 2

@@ -1,4 +1,4 @@
-# Build context: monorepo root (docker build -f apps/api/Dockerfile .)
+# Build context: repo root (docker build -f apps/api/Dockerfile .)
 #
 # Three-stage build:
 #   1. builder      — compiles TypeScript (full devDependencies available)

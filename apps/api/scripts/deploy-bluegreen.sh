@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# deploy-bluegreen.sh — FieldTrack 2.0 Blue-Green Deployment
+# deploy-bluegreen.sh — API Blue-Green Deployment
 #
 # State machine:
 #   INIT
@@ -28,7 +28,7 @@
 #      -> rollback succeeded              -> DEPLOY_FAILED_ROLLBACK  exit 1
 #      -> rollback failed                 -> DEPLOY_FAILED_FATAL     exit 2
 #
-# Slot state file: /var/run/fieldtrack/active-slot
+# Slot state file: /var/run/api/active-slot
 #   /var/run is a tmpfs (cleared on reboot). The _ft_resolve_slot() recovery
 #   function handles a missing file by inspecting running containers and the
 #   live nginx config, then re-writing the file. No manual step needed after
@@ -44,8 +44,8 @@
 # Observability features:
 #   DEPLOY_ID        -- unique deploy identifier for log correlation (YYYYMMDD_HHMMSS_PID)
 #   deploy_id label  -- container labeled with deploy ID for instant traceability
-#   fieldtrack.sha   -- container labeled with image SHA for quick version lookup
-#   fieldtrack.slot  -- container labeled with slot name (blue/green)
+#   api.sha   -- container labeled with image SHA for quick version lookup
+#   api.slot  -- container labeled with slot name (blue/green)
 #   duration_sec     -- all exits logged with deploy duration for performance tracking
 #   PREFLIGHT_STRICT -- optional strict mode: enforces preflight checks, fails if missing
 #
@@ -61,7 +61,7 @@ trap '_ft_trap_err "$LINENO"' ERR
 # { set +x; } 2>/dev/null suppresses xtrace noise inside helpers.
 # ---------------------------------------------------------------------------
 _FT_STATE="INIT"
-DEPLOY_LOG_FILE="${DEPLOY_LOG_FILE:-/var/log/fieldtrack/deploy.log}"
+DEPLOY_LOG_FILE="${DEPLOY_LOG_FILE:-/var/log/api/deploy.log}"
 
 _ft_log() {
     { set +x; } 2>/dev/null
@@ -91,8 +91,8 @@ _ft_trap_err() {
 _ft_snapshot() {
     { set +x; } 2>/dev/null
     printf '[DEPLOY] -- SYSTEM SNAPSHOT ----------------------------------------\n' >&2
-    printf '[DEPLOY]   slot_file  = %s\n' "$(cat "${ACTIVE_SLOT_FILE:-/var/run/fieldtrack/active-slot}" 2>/dev/null || echo 'MISSING')" >&2
-    printf '[DEPLOY]   nginx_port = %s\n' "$(grep -oP 'server 127\.0\.0\.1:\K[0-9]+' "${NGINX_CONF:-/etc/nginx/sites-enabled/fieldtrack.conf}" 2>/dev/null | head -1 || echo 'unreadable')" >&2
+    printf '[DEPLOY]   slot_file  = %s\n' "$(cat "${ACTIVE_SLOT_FILE:-/var/run/api/active-slot}" 2>/dev/null || echo 'MISSING')" >&2
+    printf '[DEPLOY]   nginx_port = %s\n' "$(grep -oP 'server 127\.0\.0\.1:\K[0-9]+' "${NGINX_CONF:-/etc/nginx/sites-enabled/api.conf}" 2>/dev/null | head -1 || echo 'unreadable')" >&2
     printf '[DEPLOY]   containers =\n' >&2
     docker ps --format '[DEPLOY]     {{.Names}} -> {{.Status}} ({{.Ports}})' 1>&2 2>/dev/null \
         || printf '[DEPLOY]     (docker ps unavailable)\n' >&2
@@ -142,28 +142,28 @@ fi
 # ---------------------------------------------------------------------------
 # CONSTANTS
 # ---------------------------------------------------------------------------
-IMAGE="ghcr.io/fieldtrack-tech/fieldtrack-backend:${1:-latest}"
+IMAGE="ghcr.io/fieldtrack-tech/api:${1:-latest}"
 IMAGE_SHA="${1:-latest}"
 
-BLUE_NAME="backend-blue"
-GREEN_NAME="backend-green"
+BLUE_NAME="api-blue"
+GREEN_NAME="api-green"
 BLUE_PORT=3001
 GREEN_PORT=3002
 APP_PORT=3000
-NETWORK="fieldtrack_network"
+NETWORK="api_network"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 # Slot state directory and file.
-# /var/run/fieldtrack/ is chosen over /tmp (world-writable, cleaned by tmpwatch)
+# /var/run/api/ is chosen over /tmp (world-writable, cleaned by tmpwatch)
 # and $HOME (variable path, not auditable as runtime state).
 # /var/run IS a tmpfs -- the _ft_resolve_slot() recovery handles missing files.
-SLOT_DIR="/var/run/fieldtrack"
+SLOT_DIR="/var/run/api"
 ACTIVE_SLOT_FILE="$SLOT_DIR/active-slot"
 
-NGINX_CONF="/etc/nginx/sites-enabled/fieldtrack.conf"
-NGINX_TEMPLATE="$REPO_DIR/infra/nginx/fieldtrack.conf"
+NGINX_CONF="/etc/nginx/sites-enabled/api.conf"
+NGINX_TEMPLATE="$REPO_DIR/infra/nginx/api.conf"
 MAX_HISTORY=5
 MAX_HEALTH_ATTEMPTS=40
 HEALTH_INTERVAL=3
@@ -388,6 +388,8 @@ _ft_log "msg='environment loaded' api_hostname=$API_HOSTNAME"
 set +x
 "$SCRIPT_DIR/validate-env.sh" --check-monitoring
 set -x
+# Harden monitoring env file permissions on every deploy (defense-in-depth).
+chmod 600 "$DEPLOY_ROOT/infra/.env.monitoring" 2>/dev/null || true
 
 _ft_log "msg='env contract validated'"
 
@@ -486,9 +488,9 @@ timeout 60 docker run -d \
   --network "$NETWORK" \
   -p "127.0.0.1:$INACTIVE_PORT:$APP_PORT" \
   --restart unless-stopped \
-  --label "fieldtrack.sha=$IMAGE_SHA" \
-  --label "fieldtrack.slot=$INACTIVE" \
-  --label "fieldtrack.deploy_id=$DEPLOY_ID" \
+  --label "api.sha=$IMAGE_SHA" \
+  --label "api.slot=$INACTIVE" \
+  --label "api.deploy_id=$DEPLOY_ID" \
   --env-file "$ENV_FILE" \
   "$IMAGE"
 
@@ -581,8 +583,8 @@ _ft_state "SWITCH_NGINX" "msg='switching nginx upstream' port=$INACTIVE_PORT"
 
 # Backup goes to /etc/nginx/ (NOT sites-enabled/) so nginx does not parse it
 # during validation and trigger a duplicate-upstream error.
-NGINX_BACKUP="/etc/nginx/fieldtrack.conf.bak.$(date +%s)"
-NGINX_TMP="$(mktemp /tmp/fieldtrack-nginx.XXXXXX.conf)"
+NGINX_BACKUP="/etc/nginx/api.conf.bak.$(date +%s)"
+NGINX_TMP="$(mktemp /tmp/api-nginx.XXXXXX.conf)"
 
 sed \
     -e "s|__BACKEND_PORT__|$INACTIVE_PORT|g" \
@@ -593,7 +595,7 @@ sudo cp "$NGINX_CONF" "$NGINX_BACKUP"
 sudo cp "$NGINX_TMP" "$NGINX_CONF"
 rm -f "$NGINX_TMP"
 # Remove stale backups accidentally left in sites-enabled/ by old deploy runs.
-sudo rm -f /etc/nginx/sites-enabled/fieldtrack.conf.bak.*
+sudo rm -f /etc/nginx/sites-enabled/api.conf.bak.*
 
 if ! sudo nginx -t 2>&1; then
     _ft_log "level=ERROR msg='nginx config test failed -- restoring backup'"
@@ -699,9 +701,9 @@ if [ "$_PUB_PASSED" != "true" ]; then
     fi
 
     _ft_log "msg='system degraded -- triggering rollback' container=$ACTIVE_NAME"
-    if [ "${FIELDTRACK_ROLLBACK_IN_PROGRESS:-0}" != "1" ]; then
+    if [ "${API_ROLLBACK_IN_PROGRESS:-0}" != "1" ]; then
         _ft_log "msg='triggering image rollback to previous stable SHA'"
-        export FIELDTRACK_ROLLBACK_IN_PROGRESS=1
+        export API_ROLLBACK_IN_PROGRESS=1
         _ft_release_lock
         if ! "$SCRIPT_DIR/rollback.sh" --auto; then
             _ft_snapshot
@@ -759,8 +761,8 @@ if [ "$_STABLE" = "false" ]; then
     fi
 
     _ft_log "msg='triggering rollback after stability failure'"
-    if [ "${FIELDTRACK_ROLLBACK_IN_PROGRESS:-0}" != "1" ]; then
-        export FIELDTRACK_ROLLBACK_IN_PROGRESS=1
+    if [ "${API_ROLLBACK_IN_PROGRESS:-0}" != "1" ]; then
+        export API_ROLLBACK_IN_PROGRESS=1
         _ft_release_lock
         if ! "$SCRIPT_DIR/rollback.sh" --auto; then
             _ft_snapshot
@@ -920,7 +922,7 @@ MONITORING_HASH=$(find "$REPO_DIR/infra" -readable \
     -not -path "$REPO_DIR/infra/nginx/*" \
     \( -name '*.yml' -o -name '*.yaml' -o -name '*.conf' -o -name '*.toml' -o -name '*.json' \) \
     | sort | xargs -r sha256sum 2>/dev/null | sha256sum | cut -d' ' -f1 || echo "changed")
-MONITORING_HASH_FILE="$HOME/.fieldtrack-monitoring-hash"
+MONITORING_HASH_FILE="$HOME/.api-monitoring-hash"
 
 if [ -f "$MONITORING_HASH_FILE" ] && [ "$(cat "$MONITORING_HASH_FILE")" = "$MONITORING_HASH" ]; then
     _ft_log "msg='monitoring config unchanged -- skipping restart'"
