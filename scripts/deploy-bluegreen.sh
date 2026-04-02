@@ -460,6 +460,14 @@ fi
 _ft_log "msg='slot resolved' active=$ACTIVE active_port=$ACTIVE_PORT inactive=$INACTIVE inactive_port=$INACTIVE_PORT"
 
 # ---------------------------------------------------------------------------
+# INITIAL DEPLOYMENT DETECTION -- no containers exist yet
+# ---------------------------------------------------------------------------
+if ! docker ps -a --format '{{.Names}}' | grep -Eq '^api-(blue|green)$'; then
+    _ft_log "msg='initial deployment detected — no existing containers'"
+    INITIAL_DEPLOY=true
+fi
+
+# ---------------------------------------------------------------------------
 # IDEMPOTENCY GUARD -- skip deploy if this exact SHA is already the active container
 # ---------------------------------------------------------------------------
 _ft_state "IDEMPOTENCY" "msg='checking if target SHA already deployed' sha=$IMAGE_SHA"
@@ -790,18 +798,22 @@ unset _STABLE
 # ---------------------------------------------------------------------------
 _ft_state "CLEANUP" "msg='validating active container exists before cleanup' name=$ACTIVE_NAME"
 
-# ACTIVE CONTAINER GUARD -- prevent edge-case race corruption
+# ACTIVE CONTAINER GUARD -- handle missing container gracefully (e.g., first deploy or crash)
 if ! docker ps --format '{{.Names}}' | grep -q "^$ACTIVE_NAME$"; then
-    _ft_log "level=ERROR msg='active container missing before cleanup -- cannot safely proceed (possible race condition or crash)' name=$ACTIVE_NAME"
-    _ft_snapshot
-    _ft_exit 3 "DEPLOY_FAILED_FATAL" "reason=active_container_missing_before_cleanup"
+    _ft_log "msg='active container missing — treating as first deploy, skipping cleanup' name=$ACTIVE_NAME"
+    SKIP_CLEANUP=true
+else
+    _ft_log "msg='active container guard passed' name=$ACTIVE_NAME"
 fi
-_ft_log "msg='active container guard passed' name=$ACTIVE_NAME"
 
 # Graceful shutdown: allow in-flight requests to drain before forcing removal.
-docker stop --time 10 "$ACTIVE_NAME" 2>/dev/null || true
-docker rm "$ACTIVE_NAME" || true
-_ft_log "msg='previous container removed (graceful)' name=$ACTIVE_NAME"
+if [ "${SKIP_CLEANUP:-false}" != "true" ]; then
+    docker stop --time 10 "$ACTIVE_NAME" 2>/dev/null || true
+    docker rm "$ACTIVE_NAME" || true
+    _ft_log "msg='previous container removed (graceful)' name=$ACTIVE_NAME"
+else
+    _ft_log "msg='cleanup skipped (first deploy scenario or container already removed)'"
+fi
 
 _ft_state "SUCCESS" "msg='deployment complete' container=$INACTIVE_NAME sha=$IMAGE_SHA slot=$INACTIVE port=$INACTIVE_PORT"
 
