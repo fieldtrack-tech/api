@@ -153,8 +153,14 @@ jobs:
       - name: Guard — no docker exec curl in workflows
         if: needs.detect-changes.outputs.api == 'true'
         run: |
-          if grep -R "docker exec.*curl" .github/workflows; then
+          MATCHES=$(grep -R "docker exec.*curl" .github/workflows || true)
+          FILTERED=$(echo "$MATCHES" \
+            | grep -v "Guard — no docker exec curl" \
+            | grep -v "Forbidden pattern" \
+            | grep -v "grep -R")
+          if [ -n "$FILTERED" ]; then
             echo "❌ Forbidden pattern: docker exec curl detected in workflows"
+            echo "$FILTERED"
             exit 1
           fi
           echo "✅ No docker exec curl patterns found"
