@@ -724,12 +724,12 @@ jobs:
             ACTIVE_CONTAINER="api-${ACTIVE_SLOT}"
             DEPLOY_STATUS="UNKNOWN"
 
-            # Health check via docker exec — NO host port binding required.
-            # api containers live only on api_network; localhost:3000 here means
-            # the container's own loopback (executed via docker exec).
+            # Health check via in-network curl container — exercises Docker DNS
+            # and bridge routing (same path nginx uses). NO host port binding needed.
+            FT_CURL_IMG="curlimages/curl:8.7.1"
             if docker inspect "$ACTIVE_CONTAINER" >/dev/null 2>&1; then
-              if docker exec "$ACTIVE_CONTAINER" \
-                  curl -sf --max-time 5 "http://localhost:3000/health" >/dev/null 2>&1; then
+              if docker run --rm --network api_network "$FT_CURL_IMG" \
+                  -sf --max-time 5 "http://$ACTIVE_CONTAINER:3000/health" >/dev/null 2>&1; then
                 DEPLOY_STATUS="SUCCESS"
               else
                 DEPLOY_STATUS="UNHEALTHY"
@@ -778,10 +778,15 @@ jobs:
               exit 1
             }
 
-            # Poll /ready via Docker service DNS (no host port binding needed)
+            # Poll /ready via in-network curl (Docker DNS + bridge routing).
+            # /ready checks Redis, Supabase, and BullMQ — definitive readiness gate.
+            # Uses docker run rather than docker exec so the check exercises the
+            # same network path nginx uses, not the container's own loopback.
+            FT_CURL_IMG="curlimages/curl:8.7.1"
             for i in $(seq 1 15); do
-              STATUS=$(docker exec "$ACTIVE_CONTAINER" \
-                curl -s -o /dev/null -w "%{http_code}" "http://localhost:3000/ready" 2>/dev/null || echo "000")
+              STATUS=$(docker run --rm --network api_network "$FT_CURL_IMG" \
+                -s -o /dev/null -w "%{http_code}" \
+                "http://$ACTIVE_CONTAINER:3000/ready" 2>/dev/null || echo "000")
               if [ "$STATUS" = "200" ]; then
                 echo "✓ API ready (container $ACTIVE_CONTAINER, attempt $i)"
                 exit 0

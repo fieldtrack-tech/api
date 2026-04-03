@@ -61,10 +61,14 @@ done
 
 # ── Helper: read a value from a KEY=VALUE env file ─────────────────────────────
 # Usage: get_val KEY /path/to/file
+#
+# Uses grep + cut only — avoids sed quote-stripping which corrupts values
+# containing special characters (URLs, tokens, passwords).
+# Head -1 prevents duplicate-key ambiguity; -E anchors on the key name so
+# KEY_EXTRA= cannot accidentally match KEY=.
 get_val() {
     local key="$1" file="$2"
-    grep -E "^${key}=" "$file" 2>/dev/null | tail -1 | cut -d'=' -f2- \
-        | sed "s/^['\"]//; s/['\"]$//"
+    grep -E "^${key}=" "$file" 2>/dev/null | head -1 | cut -d'=' -f2-
 }
 
 DERIVED_HOSTNAME=""
@@ -223,11 +227,12 @@ else
     SLACK_WEBHOOK="$(get_val "ALERTMANAGER_SLACK_WEBHOOK" "$MONITORING_ENV_FILE")"
     if [[ -z "$SLACK_WEBHOOK" ]]; then
         fail "ALERTMANAGER_SLACK_WEBHOOK not set in infra/.env.monitoring"
-    elif [[ ! "$SLACK_WEBHOOK" =~ ^https://hooks.slack.com/ ]]; then
+    elif [[ ! "$SLACK_WEBHOOK" =~ ^https://hooks\.slack\.com/ ]]; then
         fail "ALERTMANAGER_SLACK_WEBHOOK is not a valid Slack webhook URL"
     else
         pass "ALERTMANAGER_SLACK_WEBHOOK is valid"
     fi
+    unset SLACK_WEBHOOK
 
     # Cross-check 1: API_HOSTNAME must match the hostname derived from API_BASE_URL
     MON_HOSTNAME="$(get_val "API_HOSTNAME" "$MONITORING_ENV_FILE")"
