@@ -100,7 +100,7 @@ _ft_snapshot() {
     { set +x; } 2>/dev/null
     printf '[DEPLOY] -- SYSTEM SNAPSHOT ----------------------------------------\n' >&2
     printf '[DEPLOY]   slot_file  = %s\n' "$(cat "${ACTIVE_SLOT_FILE:-/var/run/api/active-slot}" 2>/dev/null || echo 'MISSING')" >&2
-    printf '[DEPLOY]   nginx_upstream = %s\n' "$(grep -oE 'server (api-blue|api-green):3000' "${NGINX_CONF:-$HOME/api/infra/nginx/live/api.conf}" 2>/dev/null | head -1 || echo 'unreadable')" >&2
+    printf '[DEPLOY]   nginx_upstream = %s\n' "$(grep -oE 'http://(api-blue|api-green):3000' "${NGINX_CONF:-$HOME/api/infra/nginx/live/api.conf}" 2>/dev/null | grep -oE 'api-blue|api-green' | head -1 || echo 'unreadable')" >&2
     printf '[DEPLOY]   containers =\n' >&2
     docker ps --format '[DEPLOY]     {{.Names}} -> {{.Status}} ({{.Ports}})' 1>&2 2>/dev/null \
         || printf '[DEPLOY]     (docker ps unavailable)\n' >&2
@@ -150,8 +150,16 @@ fi
 # ---------------------------------------------------------------------------
 # CONSTANTS
 # ---------------------------------------------------------------------------
-IMAGE="ghcr.io/fieldtrack-tech/api:${1:-latest}"
-IMAGE_SHA="${1:-latest}"
+# Immutable SHA tags ONLY — 'latest' is forbidden in production.
+# Reject empty and 'latest' before any Docker operation so failures are
+# loud and attributed to the caller rather than appearing as pull errors.
+IMAGE_SHA="${1:-}"
+if [ -z "$IMAGE_SHA" ] || [ "$IMAGE_SHA" = "latest" ]; then
+    printf '[DEPLOY] ts=%s state=INIT level=ERROR msg="image SHA required -- latest tag is forbidden in production" sha=%s\n' \
+        "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "${IMAGE_SHA:-<empty>}" >&2
+    exit 2
+fi
+IMAGE="ghcr.io/fieldtrack-tech/api:$IMAGE_SHA"
 
 BLUE_NAME="api-blue"
 GREEN_NAME="api-green"
@@ -403,7 +411,7 @@ _ft_resolve_slot() {
     elif [ "$blue_running" = "true" ] && [ "$green_running" = "true" ]; then
         # Both running -- read nginx upstream container as authoritative tiebreaker.
         local nginx_upstream
-        nginx_upstream=$(grep -oE 'server (api-blue|api-green):3000' "$NGINX_CONF" 2>/dev/null | grep -oE 'api-blue|api-green' | head -1 || echo "")
+        nginx_upstream=$(grep -oE 'http://(api-blue|api-green):3000' "$NGINX_CONF" 2>/dev/null | grep -oE 'api-blue|api-green' | head -1 || echo "")
         if [ "$nginx_upstream" = "api-blue" ]; then recovered_slot="blue"
         elif [ "$nginx_upstream" = "api-green" ]; then recovered_slot="green"
         else
@@ -943,7 +951,8 @@ _ft_log "msg='nginx reloaded' upstream=$INACTIVE_NAME:$APP_PORT"
 
 # Upstream sanity check -- confirm nginx config actually points at the new container.
 # Catches template substitution failures before traffic is affected.
-_RELOAD_CONTAINER=$(grep -oE 'server (api-blue|api-green):3000' "$NGINX_CONF" 2>/dev/null | grep -oE 'api-blue|api-green' | head -1 || echo "")
+# Upstream sanity: live config must contain http://INACTIVE_NAME:3000 (set $api_backend format)
+_RELOAD_CONTAINER=$(grep -oE 'http://(api-blue|api-green):3000' "$NGINX_CONF" 2>/dev/null | grep -oE 'api-blue|api-green' | head -1 || echo "")
 if [ "$_RELOAD_CONTAINER" != "$INACTIVE_NAME" ]; then
     _ft_log "level=ERROR msg='nginx upstream sanity check failed after reload' expected=$INACTIVE_NAME actual=${_RELOAD_CONTAINER:-unreadable}"
     cp "$NGINX_BACKUP" "$NGINX_CONF"
@@ -1030,8 +1039,8 @@ for _attempt in 1 2 3 4 5; do
     sleep 5
 done
 
-# Container alignment check -- live nginx config MUST point at the new container.
-_NGINX_CONTAINER=$(grep -oE 'server (api-blue|api-green):3000' "$NGINX_CONF" 2>/dev/null | grep -oE 'api-blue|api-green' | head -1 || echo "")
+# Container alignment check -- live nginx config MUST contain http://INACTIVE_NAME:3000.
+_NGINX_CONTAINER=$(grep -oE 'http://(api-blue|api-green):3000' "$NGINX_CONF" 2>/dev/null | grep -oE 'api-blue|api-green' | head -1 || echo "")
 if [ -n "$_NGINX_CONTAINER" ] && [ "$_NGINX_CONTAINER" != "$INACTIVE_NAME" ]; then
     _ft_log "level=ERROR msg='nginx container mismatch -- slot switch did not take effect' expected=$INACTIVE_NAME actual=$_NGINX_CONTAINER"
     _PUB_PASSED=false
@@ -1193,8 +1202,8 @@ else
     _FT_TRUTH_CHECK_PASSED=false
 fi
 
-# (2) Verify nginx upstream container matches target
-_NGINX_CONTAINER=$(grep -oE 'server (api-blue|api-green):3000' "$NGINX_CONF" 2>/dev/null | grep -oE 'api-blue|api-green' | head -1 || echo "")
+# (2) Verify nginx upstream container matches target (set $api_backend format)
+_NGINX_CONTAINER=$(grep -oE 'http://(api-blue|api-green):3000' "$NGINX_CONF" 2>/dev/null | grep -oE 'api-blue|api-green' | head -1 || echo "")
 if [ -n "$_NGINX_CONTAINER" ]; then
     if [ "$_NGINX_CONTAINER" != "$INACTIVE_NAME" ]; then
         _ft_log "level=ERROR msg='truth check failed: nginx container mismatch' expected=$INACTIVE_NAME actual=$_NGINX_CONTAINER"

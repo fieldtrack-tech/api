@@ -82,7 +82,7 @@ case "${ALERTMANAGER_SLACK_WEBHOOK}" in
         ;;
     *)
         log_error "ALERTMANAGER_SLACK_WEBHOOK does not start with 'https://hooks.slack.com/'."
-        log_error "Value prefix: $(printf '%s' "${ALERTMANAGER_SLACK_WEBHOOK}" | cut -c1-30)..."
+        log_error "Value prefix: ***masked*** (redacted to prevent webhook exposure in logs)"
         exit 1
         ;;
 esac
