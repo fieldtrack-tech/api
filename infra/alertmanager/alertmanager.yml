@@ -1,8 +1,17 @@
 # Alertmanager route and receiver configuration for Slack-only alerting.
-# No email or SMTP configurations are present.
+#
+# NOTE:
+# This file is a TEMPLATE and MUST be rendered via envsubst before use.
+# Alertmanager does NOT support environment variables natively.
+# Render this file by running:
+#   bash infra/scripts/render-alertmanager.sh
+# The rendered output is written to: infra/alertmanager/alertmanager.rendered.yml
+# docker-compose mounts ONLY the rendered file — never this template directly.
+#
+# No email, SMTP, or PagerDuty configurations are present.
 
 route:
-  receiver: ops-slack
+  receiver: ops-slack-warning
   group_by: ["alertname", "severity"]
   group_wait: 30s
   group_interval: 5m
@@ -17,6 +26,7 @@ route:
       receiver: ops-slack-warning
 
 receivers:
+  # Critical alerts: dedicated Slack channel for immediate response
   - name: ops-slack-critical
     slack_configs:
       - api_url: "${ALERTMANAGER_SLACK_WEBHOOK}"
@@ -29,6 +39,7 @@ receivers:
           *Summary:* {{ .CommonAnnotations.summary }}
           *Description:* {{ .CommonAnnotations.description }}
 
+  # Warning alerts: standard alerts channel
   - name: ops-slack-warning
     slack_configs:
       - api_url: "${ALERTMANAGER_SLACK_WEBHOOK}"

@@ -937,6 +937,12 @@ fi
 mv "$DEPLOY_HISTORY_TMP" "$DEPLOY_HISTORY"
 _ft_log "msg='deploy history updated' sha=$IMAGE_SHA"
 
+# Alertmanager config rendering: always render before monitoring stack operations.
+# Alertmanager does NOT support env vars natively; the rendered file must exist
+# before docker compose up. This is idempotent and safe to run on every deploy.
+bash "$REPO_DIR/infra/scripts/render-alertmanager.sh"
+_ft_log "msg='alertmanager config rendered' file=$REPO_DIR/infra/alertmanager/alertmanager.rendered.yml"
+
 # Monitoring stack: restart only when infra configs have actually changed.
 # Hashes cover all infra config files EXCEPT the nginx template (re-rendered on
 # every deploy) to avoid spurious monitoring restarts.

@@ -9,6 +9,8 @@
 infra/tempo/data/
 infra/prometheus/data/
 infra/grafana/data/
+# Rendered Alertmanager config (contains real webhook URL — VPS only)
+infra/alertmanager/alertmanager.rendered.yml
 
 # Deployment history (VPS-side file, never committed)
 .deploy_history
