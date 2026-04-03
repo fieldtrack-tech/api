@@ -426,13 +426,57 @@ chmod 600 "$DEPLOY_ROOT/infra/.env.monitoring" 2>/dev/null || true
 
 _ft_log "msg='env contract validated'"
 
+# Ensure api_network exists (idempotent). All containers MUST be on this network.
+docker network create --driver bridge "$NETWORK" 2>/dev/null \
+    && _ft_log "msg='api_network created'" \
+    || _ft_log "msg='api_network already exists'"
+
 # NGINX CONTAINER GUARD -- nginx MUST run as a Docker container on api_network.
 # With container-name upstreams (server api-blue:3000), Docker's embedded DNS
 # (127.0.0.11) is required for name resolution. This only works from WITHIN
 # Docker containers on the same network -- not from a host systemd nginx service.
+#
+# BOOTSTRAP MODE: If nginx is missing, start it via docker compose --no-deps so
+# the monitoring dependency chain (nginx→grafana→prometheus→alertmanager) does
+# NOT block a first-deploy. nginx starts immediately; monitoring catches up.
 if ! docker inspect nginx >/dev/null 2>&1; then
-    _ft_log "level=ERROR msg='nginx container not found -- nginx must run as Docker container on api_network. Run: docker compose --env-file infra/.env.monitoring -f infra/docker-compose.monitoring.yml up -d nginx'"
-    _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=nginx_container_missing"
+    _ft_log "msg='nginx container missing — bootstrapping via docker compose --no-deps'"
+    mkdir -p "$NGINX_LIVE_DIR" "$NGINX_BACKUP_DIR"
+    # Write a bootstrap config pointing at api-blue (default first-deploy slot)
+    # so nginx can start without waiting for an API container.
+    if [ ! -f "$NGINX_CONF" ]; then
+        sed \
+            -e "s|__ACTIVE_CONTAINER__|api-blue|g" \
+            -e "s|__API_HOSTNAME__|${API_HOSTNAME}|g" \
+            "$NGINX_TEMPLATE" > "$NGINX_CONF"
+        _ft_log "msg='bootstrap nginx config written' target=api-blue path=$NGINX_CONF"
+    fi
+    # Kill any ghost docker-proxy holdind host ports before starting nginx
+    pkill docker-proxy 2>/dev/null || true
+    cd "$DEPLOY_ROOT/infra"
+    if ! docker compose --env-file .env.monitoring -f docker-compose.monitoring.yml \
+            up -d --no-deps nginx 2>&1 | tee -a "$DEPLOY_LOG_FILE" >&2; then
+        _ft_log "level=ERROR msg='docker compose up --no-deps nginx failed'"
+        cd "$DEPLOY_ROOT"
+        _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=nginx_bootstrap_compose_failed"
+    fi
+    cd "$DEPLOY_ROOT"
+    # Wait up to 30 s for the nginx container to become available
+    _NGINX_STARTED=false
+    for _ni in $(seq 1 10); do
+        if docker inspect nginx >/dev/null 2>&1; then
+            _ft_log "msg='nginx bootstrap complete' attempt=$_ni"
+            _NGINX_STARTED=true
+            break
+        fi
+        _ft_log "msg='waiting for nginx container' attempt=$_ni/10"
+        sleep 3
+    done
+    if [ "$_NGINX_STARTED" != "true" ]; then
+        _ft_log "level=ERROR msg='nginx container failed to start after bootstrap'"
+        _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=nginx_bootstrap_timeout"
+    fi
+    unset _NGINX_STARTED _ni
 fi
 _NGINX_NETWORK=$(docker inspect nginx --format='{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' 2>/dev/null || echo "")
 if ! echo "$_NGINX_NETWORK" | grep -q "$NETWORK"; then
@@ -658,9 +702,11 @@ _ft_state "SWITCH_NGINX" "msg='switching nginx upstream' container=$INACTIVE_NAM
 # switching nginx (complements the jitter already in the health check loop).
 sleep 2
 
-# Backup goes to /etc/nginx/ (NOT sites-enabled/) so nginx does not parse it
-# during validation and trigger a duplicate-upstream error.
-NGINX_BACKUP="/etc/nginx/api.conf.bak.$(date +%s)"
+# Backup stored in NGINX_BACKUP_DIR (under the repo) — consistent with the
+# pruning logic below. Avoids creating files in /etc/nginx/ (host-side)
+# which is not guaranteed to exist when nginx runs only inside Docker.
+mkdir -p "$NGINX_BACKUP_DIR"
+NGINX_BACKUP="$NGINX_BACKUP_DIR/api.conf.bak.$(date +%s)"
 NGINX_TMP="$(mktemp /tmp/api-nginx.XXXXXX.conf)"
 
 # PRE-RELOAD GATE: confirm container is still ready before pointing nginx at it

@@ -587,14 +587,24 @@ jobs:
           key: ${{ secrets.DO_SSH_KEY }}
           script: |
             ACTIVE_SLOT=$(cat /var/run/api/active-slot 2>/dev/null || echo "unknown")
+            ACTIVE_CONTAINER="api-${ACTIVE_SLOT}"
             DEPLOY_STATUS="UNKNOWN"
-            
-            # Check if health endpoint is responding (good sign of successful deploy)
-            if timeout 5 curl -sf http://127.0.0.1:3000/health >/dev/null 2>&1; then
-              DEPLOY_STATUS="SUCCESS"
+
+            # Health check via docker exec — NO host port binding required.
+            # api containers live only on api_network; localhost:3000 here means
+            # the container's own loopback (executed via docker exec).
+            if docker inspect "$ACTIVE_CONTAINER" >/dev/null 2>&1; then
+              if docker exec "$ACTIVE_CONTAINER" \
+                  curl -sf --max-time 5 "http://localhost:3000/health" >/dev/null 2>&1; then
+                DEPLOY_STATUS="SUCCESS"
+              else
+                DEPLOY_STATUS="UNHEALTHY"
+              fi
+            else
+              DEPLOY_STATUS="CONTAINER_MISSING"
             fi
-            
-            echo "DEPLOY_STATE=$DEPLOY_STATUS| SLOT=$ACTIVE_SLOT | SHA=${{ github.sha }}"
+
+            echo "DEPLOY_STATE=$DEPLOY_STATUS | SLOT=$ACTIVE_SLOT | CONTAINER=$ACTIVE_CONTAINER | SHA=${{ github.sha }}"
 
   # ---------------------------------------------------------------------------
   # JOB: api-health-gate  (Step E+)

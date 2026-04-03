@@ -155,9 +155,13 @@ jobs:
       - name: Container bootstrap validation
         if: needs.detect-changes.outputs.api == 'true'
         run: |
+          # NO host port bindings — container runs on an isolated Docker bridge
+          # network. All checks use docker exec to reach the container directly,
+          # matching the production pattern (api_network / Docker DNS).
+          docker network create ci_api_net
           docker run -d \
             --name api-ci-test \
-            -p 127.0.0.1:3001:3000 \
+            --network ci_api_net \
             -e CONFIG_VERSION \
             -e APP_ENV \
             -e NODE_ENV \
@@ -188,7 +192,8 @@ jobs:
 
           STATUS="000"
           for i in $(seq 1 12); do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3001/health || echo "000")
+            STATUS=$(docker exec api-ci-test \
+              curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/health 2>/dev/null || echo "000")
             if [ "$STATUS" = "200" ]; then break; fi
             echo "Health check attempt $i: HTTP $STATUS — waiting..."
             sleep 2
@@ -197,21 +202,29 @@ jobs:
           if [ "$STATUS" != "200" ]; then
             echo "❌ /health returned HTTP $STATUS after 24 s (expected 200)"
             docker logs api-ci-test --tail 50
+            docker rm -f api-ci-test || true
+            docker network rm ci_api_net || true
             exit 1
           fi
 
+          echo "✓ /health returned 200"
+
           # Smoke tests: admin endpoints must reject unauthenticated requests with 401
           for ENDPOINT in /admin/audit-log /admin/webhook-dlq; do
-            ECODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:3001${ENDPOINT}" || echo "000")
+            ECODE=$(docker exec api-ci-test \
+              curl -s -o /dev/null -w "%{http_code}" "http://localhost:3000${ENDPOINT}" 2>/dev/null || echo "000")
             if [ "$ECODE" != "401" ]; then
               echo "❌ ${ENDPOINT} expected 401 (unauthenticated), got ${ECODE}"
               docker logs api-ci-test --tail 50
+              docker rm -f api-ci-test || true
+              docker network rm ci_api_net || true
               exit 1
             fi
             echo "✓ ${ENDPOINT} → 401 (auth guard verified)"
           done
 
           docker rm -f api-ci-test
+          docker network rm ci_api_net
           docker rmi fieldtrack-api:ci-validation
 
   infra-ci:
