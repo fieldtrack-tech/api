@@ -220,7 +220,11 @@ jobs:
           # curlimages/curl container on the same network (ci_api_net), matching
           # production pattern (api_network / Docker DNS). The API image does NOT
           # include curl; no tooling is assumed inside the container.
-          trap 'docker rm -f api-ci-test 2>/dev/null || true; docker network rm ci_api_net 2>/dev/null || true' EXIT
+          cleanup() {
+            docker rm -f api-ci-test 2>/dev/null || true
+            docker network rm ci_api_net 2>/dev/null || true
+          }
+          trap cleanup EXIT
 
           docker network create ci_api_net
           docker run -d \
@@ -299,6 +303,8 @@ jobs:
             echo "✓ ${ENDPOINT} → 401 (auth guard verified)"
           done
 
+          # Drop container + network before rmi (trap runs only after this script finishes).
+          cleanup
           docker rmi fieldtrack-api:ci-validation
 
   # ---------------------------------------------------------------------------
