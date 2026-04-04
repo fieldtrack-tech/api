@@ -63,6 +63,29 @@ DEPLOY_ID=$(date +%Y%m%d_%H%M%S)_$$
 PREFLIGHT_STRICT="${PREFLIGHT_STRICT:-false}"
 
 # ---------------------------------------------------------------------------
+# PHASE-AWARE DEPLOY RESULT TRACKING
+# Written to /tmp/ft_deploy_result on every exit path so CI can make
+# phase-aware rollback decisions.
+#
+# Values:
+#   FAILED_PRE_SWITCH  -- deploy failed before nginx traffic was switched
+#                         (no rollback needed — production was never touched)
+#   SWITCHED           -- nginx upstream was reloaded to new container
+#                         (CI rollback IS appropriate if health checks fail)
+#   RESTORED           -- switch happened but nginx was restored to old config
+#                         (deploy.sh handled recovery — CI must NOT re-rollback)
+#   FAILED             -- catastrophic failure, both deploy and internal
+#                         rollback failed (manual intervention required)
+# ---------------------------------------------------------------------------
+_FT_DEPLOY_RESULT="FAILED_PRE_SWITCH"
+
+# Capture whether this process was launched AS a rollback subprocess by
+# _trigger_internal_rollback().  Subprocess inherits API_ROLLBACK_IN_PROGRESS=1
+# from the parent; capturing it here prevents the subprocess from
+# overwriting the parent's result file when the parent calls _ft_exit.
+_FT_IS_ROLLBACK_SUBPROCESS="${API_ROLLBACK_IN_PROGRESS:-0}"
+
+# ---------------------------------------------------------------------------
 # STRUCTURED LOGGING
 # ALL logging writes to stderr so stdout is data-only (subshell returns safe).
 # ---------------------------------------------------------------------------
@@ -111,7 +134,12 @@ _ft_trap_err() {
 _ft_exit() {
     local code="$1"; shift
     local duration=$(( $(date +%s) - START_TS ))
-    _ft_state "$@" "duration_sec=$duration"
+    # Write machine-readable result for CI phase-aware rollback.
+    # Skip in subprocess rollbacks (parent writes the authoritative value).
+    if [ "${_FT_IS_ROLLBACK_SUBPROCESS:-0}" != "1" ]; then
+        printf '%s\n' "$_FT_DEPLOY_RESULT" > /tmp/ft_deploy_result 2>/dev/null || true
+    fi
+    _ft_state "$@" "duration_sec=$duration deploy_result=$_FT_DEPLOY_RESULT"
     exit "$code"
 }
 
@@ -135,9 +163,9 @@ _ft_snapshot() {
     { set +x; } 2>/dev/null
     printf '[DEPLOY] -- SYSTEM SNAPSHOT ----------------------------------------\n' >&2
     printf '[DEPLOY]   slot_file  = %s\n' \
-        "$(cat "${ACTIVE_SLOT_FILE:-/var/run/api/active-slot}" 2>/dev/null || echo 'MISSING')" >&2
+        "$(cat "${ACTIVE_SLOT_FILE:-/var/lib/fieldtrack/active-slot}" 2>/dev/null || echo 'MISSING')" >&2
     printf '[DEPLOY]   backup_file = %s\n' \
-        "$(cat "${SLOT_BACKUP_FILE:-/var/lib/api/active-slot.backup}" 2>/dev/null || echo 'MISSING')" >&2
+        "$(cat "${SLOT_BACKUP_FILE:-/var/lib/fieldtrack/active-slot.backup}" 2>/dev/null || echo 'MISSING')" >&2
     printf '[DEPLOY]   nginx_upstream = %s\n' \
         "$(grep -oE 'http://(api-blue|api-green):3000' \
             "${NGINX_CONF:-/opt/infra/nginx/live/api.conf}" 2>/dev/null \
@@ -186,7 +214,7 @@ _ft_wait_docker_health() {
         case "$STATUS" in
             healthy)   _ft_log "msg='docker health check passed' container=$name"; return 0 ;;
             unhealthy) _ft_error "msg='docker health check failed' container=$name status=unhealthy"; return 1 ;;
-            none)      _ft_log "msg='docker health gate skipped (no HEALTHCHECK)' container=$name"; return 0 ;;
+            none)      _ft_error "msg='docker HEALTHCHECK not found — add HEALTHCHECK to Dockerfile; required for deploy gate' container=$name status=none"; return 1 ;;
         esac
         [ $(( i % 5 )) -eq 0 ] && _ft_log "msg='waiting for docker health' attempt=$i/30 status=$STATUS container=$name"
         sleep 2; i=$(( i + 1 ))
@@ -210,9 +238,15 @@ _ft_net_curl_out() {
     printf '%s' "$_out"
 }
 
-_ft_check_external_ready() {
+_ft_nginx_route_health_ok() {
     docker run --rm --network "$NETWORK" "$_FT_CURL_IMG" \
-        -sfk --max-time 5 "https://nginx/health" 2>/dev/null | grep -q '"status":"ok"'
+        -sfk --max-time 5 \
+        -H "Host: $API_HOSTNAME" \
+        "https://nginx/health" 2>/dev/null | grep -q '"status":"ok"'
+}
+
+_ft_check_external_ready() {
+    _ft_nginx_route_health_ok
 }
 
 # ---------------------------------------------------------------------------
@@ -425,8 +459,8 @@ pull_image() {
 # resolve_slot — determine ACTIVE/INACTIVE slots with full recovery
 #
 # Reads slot from (in precedence order):
-#   1. /var/run/api/active-slot       (primary, tmpfs)
-#   2. /var/lib/api/active-slot.backup (persistent, survives reboots)
+#   1. /var/lib/fieldtrack/active-slot  (primary, persistent)
+#   2. /var/lib/fieldtrack/active-slot.backup (secondary, same dir — belt-and-suspenders)
 #   3. nginx config upstream          (tiebreaker when both containers run)
 #   4. running containers             (recovery when slot files missing)
 #   5. default "green" / inactive "blue" (first deploy)
@@ -752,7 +786,10 @@ switch_nginx() {
 
     # Write slot AFTER nginx reload — slot always reflects what nginx serves
     _ft_write_slot "$INACTIVE"
-    _ft_log "msg='TRAFFIC_SWITCH' active=$INACTIVE_NAME sha=$IMAGE_SHA deploy_id=$DEPLOY_ID"
+    # Mark SWITCHED: from this point forward the new container is live.
+    # CI rollback is appropriate if post-deploy health checks fail.
+    _FT_DEPLOY_RESULT="SWITCHED"
+    _ft_log "msg='TRAFFIC_SWITCH' active=$INACTIVE_NAME sha=$IMAGE_SHA deploy_id=$DEPLOY_ID deploy_result=SWITCHED"
     _ft_phase_end "SWITCH_NGINX"
 
     # Store backup path in global for rollback use in verify_routing / stability
@@ -770,8 +807,7 @@ verify_routing() {
     # Post-switch routing verification (5 retries)
     local ps_ok=false
     for _ps in 1 2 3 4 5; do
-        if docker run --rm --network api_network "$_FT_CURL_IMG" \
-               -sfk --max-time 5 "https://nginx/health" >/dev/null 2>&1; then
+        if _ft_nginx_route_health_ok; then
             ps_ok=true; break
         fi
         sleep $(( RANDOM % 2 + 2 ))
@@ -800,8 +836,7 @@ verify_routing() {
 
     # Public health check via nginx
     local pub_passed=false
-    if docker run --rm --network api_network "$_FT_CURL_IMG" \
-           -sfk --max-time 10 "https://nginx/health" 2>/dev/null | grep -q '"status":"ok"'; then
+    if _ft_nginx_route_health_ok; then
         pub_passed=true
         _ft_log "msg='public health check passed' container=$INACTIVE_NAME"
     else
@@ -871,6 +906,10 @@ verify_routing() {
 # Called from verify_routing on route/stability failure.
 _restore_nginx_and_slot() {
     local prev_slot="$1"
+    # Nginx was switched to new container, now being restored to old one.
+    # Mark RESTORED so CI knows the traffic switch was undone by this script
+    # and must NOT trigger an additional external rollback.
+    _FT_DEPLOY_RESULT="RESTORED"
     _ft_log "msg='restoring previous nginx config' slot=$prev_slot"
     cp "$NGINX_BACKUP" "$NGINX_CONF"
     if docker exec nginx nginx -t >/dev/null 2>&1 && docker exec nginx nginx -s reload >/dev/null 2>&1; then
@@ -887,9 +926,14 @@ _trigger_internal_rollback() {
     local reason="$1"
     if [ "${API_ROLLBACK_IN_PROGRESS:-0}" != "1" ]; then
         _ft_error "msg='ROLLBACK triggered' reason=$reason"
+        # RESTORED: nginx was switched then this script restored it.
+        # Set before launching subprocess so the subprocess (with
+        # API_ROLLBACK_IN_PROGRESS=1) will not overwrite the result file.
+        _FT_DEPLOY_RESULT="RESTORED"
         export API_ROLLBACK_IN_PROGRESS=1
         _ft_release_lock
         if ! "$SCRIPT_DIR/deploy.sh" --rollback --auto; then
+            _FT_DEPLOY_RESULT="FAILED"
             _ft_snapshot
             _ft_exit 2 "DEPLOY_FAILED_FATAL" "reason=${reason}_and_rollback_failed"
         fi
@@ -968,8 +1012,7 @@ success() {
     for _sa in 1 2 3; do
         local t0 t1
         t0=$(date +%s%3N)
-        if docker run --rm --network api_network "$_FT_CURL_IMG" \
-               -sk --max-time 3 "https://nginx/health" 2>/dev/null | grep -q '"status":"ok"'; then
+        if _ft_nginx_route_health_ok; then
             t1=$(date +%s%3N)
             ext_latency_ms=$(( t1 - t0 ))
             ext_ok=true; break
@@ -1056,8 +1099,12 @@ main() {
         docker rm -f api-blue 2>/dev/null || true
         start_inactive
         health_check_internal
-        # Write nginx config directly for first deploy (no backup to restore)
+        # Write nginx config directly for first deploy, but keep the current
+        # maintenance config as a rollback target for the routed verification.
         mkdir -p "$NGINX_LIVE_DIR" "$NGINX_BACKUP_DIR"
+        if [ -f "$NGINX_CONF" ]; then
+            cp "$NGINX_CONF" "$NGINX_BACKUP"
+        fi
         local boot_tmp; boot_tmp="$(mktemp /tmp/api-nginx-boot.XXXXXX.conf)"
         sed -e "s|__ACTIVE_CONTAINER__|$INACTIVE_NAME|g" \
             -e "s|__API_HOSTNAME__|${API_HOSTNAME}|g" \
@@ -1080,14 +1127,11 @@ main() {
             || _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=nginx_reload_failed_bootstrap"
         _ft_log "msg='bootstrap: nginx reloaded'"
         _ft_write_slot "blue"
-        local snap_tmp; snap_tmp=$(mktemp "${SNAP_DIR}/last-good.XXXXXX")
-        printf 'slot=blue container=api-blue ts=%s\n' "$(date -Iseconds)" > "$snap_tmp"
-        mv "$snap_tmp" "$LAST_GOOD_FILE"
-        # Deploy history
-        DEPLOY_HISTORY="${DEPLOY_HISTORY:-$DEPLOY_ROOT/.deploy_history}"
-        local hist_tmp="${DEPLOY_HISTORY}.tmp.$$"
-        echo "$IMAGE_SHA" > "$hist_tmp"
-        mv "$hist_tmp" "$DEPLOY_HISTORY"
+        # Nginx reloaded and traffic is now routing to api-blue.
+        _FT_DEPLOY_RESULT="SWITCHED"
+        verify_routing
+        cleanup_old
+        success
         _ft_exit 0 "BOOTSTRAP_SUCCESS" "slot=blue image=$IMAGE"
     fi
 
@@ -1175,9 +1219,9 @@ APP_PORT=3000
 NETWORK="api_network"
 _FT_CURL_IMG="curlimages/curl:8.7.1"
 
-SLOT_DIR="/var/run/api"
+SLOT_DIR="/var/lib/fieldtrack"
 ACTIVE_SLOT_FILE="$SLOT_DIR/active-slot"
-SLOT_BACKUP_FILE="/var/lib/api/active-slot.backup"  # persistent, survives reboots
+SLOT_BACKUP_FILE="/var/lib/fieldtrack/active-slot.backup"  # persists; same dir as primary
 
 NGINX_CONF="$INFRA_ROOT/nginx/live/api.conf"
 NGINX_LIVE_DIR="$INFRA_ROOT/nginx/live"

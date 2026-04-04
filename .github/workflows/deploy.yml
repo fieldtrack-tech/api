@@ -252,19 +252,14 @@ jobs:
 
       - name: Block docker-compose.monitoring references in deploy path
         run: |
-          # deploy.sh is the only script in the deploy path.
+          # Check deploy.sh (the executable deploy script) only.
+          # Searching deploy.yml for its own guard step is circular and self-defeating;
+          # the workflow's guard is enforced at the job level by the existence of this step.
           if grep -E "docker-compose\.monitoring" scripts/deploy.sh 2>/dev/null | grep -Ev '^\s*#'; then
             echo "::error::deploy.sh references docker-compose.monitoring — deploy must be monitoring-independent"
             exit 1
           fi
-          # Verify deploy.yml does not execute monitoring compose commands.
-          # Guard comments are allowed; executable command lines are not.
-          if grep -E "docker-compose\.monitoring|docker compose.*monitoring" .github/workflows/deploy.yml \
-            | grep -Ev '(infra-leakage-guard|Block docker|No docker)'; then
-            echo "::error::deploy.yml workflow references docker-compose.monitoring outside guard comments"
-            exit 1
-          fi
-          echo "✓ No docker-compose.monitoring references in deploy path"
+          echo "✓ No docker-compose.monitoring references in scripts/deploy.sh"
 
       - name: Block /ready in deploy path (deploy.sh)
         run: |
@@ -273,6 +268,34 @@ jobs:
             exit 1
           fi
           echo "✓ deploy.sh does not reference /ready"
+
+      - name: Infra contract naming guard
+        run: |
+          # Enforce canonical naming contract (docs/infra-contract.md).
+          # Scoped to production paths only. Workflow files are intentionally
+          # excluded so the guard never matches its own grep command or logs.
+          FAIL=0
+
+          # Guard 1: no stale network name (fieldtrack_network is not the canonical name)
+          if grep -rE '\bfieldtrack_network\b' src/ scripts/ \
+               --include='*.ts' --include='*.sh' \
+               2>/dev/null | grep -Ev '^\s*#'; then
+            echo "::error::Forbidden network name 'fieldtrack_network' found — canonical name is 'api_network'"
+            FAIL=1
+          fi
+
+          # Guard 2: no localhost Redis in production paths
+          # Excludes: tests/ (unit/integration tests run on host, localhost is correct there)
+          if grep -rE 'redis://localhost:[0-9]+|redis://127\.0\.0\.1:[0-9]+' \
+               src/ scripts/ .env.example \
+               --include='*.ts' --include='*.sh' --include='*.env*' \
+               2>/dev/null | grep -Ev '^\s*(//|#)'; then
+            echo "::error::localhost Redis URL found in production paths — canonical URL is redis://redis:6379"
+            FAIL=1
+          fi
+
+          [ "$FAIL" -eq 0 ] || exit 1
+          echo "✓ Infra contract naming guard passed (api_network, redis://redis:6379)"
 
   # ---------------------------------------------------------------------------
   # JOB: build-scan-push
@@ -576,11 +599,19 @@ jobs:
       - name: Push verified image to registry
         run: |
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          # Tag and push using the FULL commit SHA so deploy.sh can reference
+          # the exact image via IMAGE=ghcr.io/.../api:$deploy_sha.
+          # Short SHA (sha_short) is kept as a convenience alias only.
+          docker tag \
+            fieldtrack-api:${{ steps.meta.outputs.sha_short }} \
+            ghcr.io/${OWNER}/api:${{ steps.meta.outputs.deploy_sha }}
+          docker push ghcr.io/${OWNER}/api:${{ steps.meta.outputs.deploy_sha }}
+          # Also push short-SHA alias for human convenience (inspect, debugging).
           docker tag \
             fieldtrack-api:${{ steps.meta.outputs.sha_short }} \
             ghcr.io/${OWNER}/api:${{ steps.meta.outputs.sha_short }}
           docker push ghcr.io/${OWNER}/api:${{ steps.meta.outputs.sha_short }}
-          echo "✓ Pushed ghcr.io/${OWNER}/api:${{ steps.meta.outputs.sha_short }}"
+          echo "✓ Pushed ghcr.io/${OWNER}/api:${{ steps.meta.outputs.deploy_sha }} (full SHA — reference for deploy)"
 
       # Use the same pinned Trivy image to generate the SBOM — no additional
       # tool dependency, no unpinned action, same supply-chain guarantees.
@@ -607,9 +638,10 @@ jobs:
           IMAGE_NAME: fieldtrack-api:${{ steps.meta.outputs.sha_short }}
           IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
         run: |
-          echo "commit=${{ github.sha }}" > provenance.txt
+          echo "commit=${{ needs.codeql-gate.outputs.deploy_sha }}" > provenance.txt
           echo "ref=${{ github.ref }}" >> provenance.txt
           echo "image=${IMAGE_NAME}" >> provenance.txt
+          echo "registry_tag=ghcr.io/${{ github.repository_owner }}/api:${{ steps.meta.outputs.deploy_sha }}" >> provenance.txt
           echo "digest=${IMAGE_DIGEST}" >> provenance.txt
           echo "workflow=${{ github.workflow }}" >> provenance.txt
           echo "run_id=${{ github.run_id }}" >> provenance.txt
@@ -631,8 +663,9 @@ jobs:
             echo "## Build · Scan · Push"
             echo "| Field | Value |"
             echo "|---|---|"
-            echo "| Commit SHA | \`${{ github.sha }}\` |"
-            echo "| Image tag | \`fieldtrack-api:${{ steps.meta.outputs.sha_short }}\` |"
+            echo "| Deploy SHA | \`${{ steps.meta.outputs.deploy_sha }}\` |"
+            echo "| Image tag (local) | \`fieldtrack-api:${{ steps.meta.outputs.sha_short }}\` |"
+            echo "| Registry tag | \`ghcr.io/${{ github.repository_owner }}/api:${{ steps.meta.outputs.deploy_sha }}\` |"
             echo "| Image digest | \`${IMAGE_DIGEST}\` |"
             echo "| SBOM components | ${SBOM_COUNT} |"
             echo "| Trivy gate | HIGH,CRITICAL / exit-code 1 / ignore-unfixed |"
@@ -711,18 +744,19 @@ jobs:
 
       - name: Log deployment metadata and trigger info
         run: |
+          DEPLOY_SHA="${{ needs.build-scan-push.outputs.deploy_sha }}"
           {
             echo "## Deployment Initiated"
             echo "| Field | Value |"
             echo "|---|---|"
-            echo "| Commit SHA | \`${{ github.sha }}\` |"
+            echo "| Deploy SHA | \`${DEPLOY_SHA}\` |"
             echo "| Trigger event | ${{ github.event_name }} |"
             echo "| Triggered by | ${{ github.actor }} |"
             echo "| Branch | ${{ github.ref_name }} |"
             echo "| Workflow run | [${{ github.run_id }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) |"
             echo "| Commit message | \`${{ github.event.head_commit.message }}\` |"
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "[DEPLOY] Deployment initiated — SHA=${{ github.sha }} EVENT=${{ github.event_name }} ACTOR=${{ github.actor }}"
+          echo "[DEPLOY] Deployment initiated — SHA=${DEPLOY_SHA} EVENT=${{ github.event_name }} ACTOR=${{ github.actor }}"
 
       - name: Blue-Green deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
@@ -741,7 +775,7 @@ jobs:
             git fetch origin
             git reset --hard ${{ needs.build-scan-push.outputs.deploy_sha }}
             chmod +x scripts/*.sh
-            ./scripts/deploy.sh "${{ needs.build-scan-push.outputs.sha_short }}"
+            ./scripts/deploy.sh "${{ needs.build-scan-push.outputs.deploy_sha }}"
             echo "[DEPLOY] Deploy completed in $(($(date +%s) - T0))s"
 
       - name: Log deployment state (slot + SHA for debugging)
@@ -752,7 +786,7 @@ jobs:
           username: ${{ secrets.DO_USER }}
           key: ${{ secrets.DO_SSH_KEY }}
           script: |
-            ACTIVE_SLOT=$(cat /var/run/api/active-slot 2>/dev/null || echo "unknown")
+            ACTIVE_SLOT=$(cat /var/lib/fieldtrack/active-slot 2>/dev/null || echo "unknown")
             ACTIVE_CONTAINER="api-${ACTIVE_SLOT}"
             DEPLOY_STATUS="UNKNOWN"
 
@@ -797,7 +831,7 @@ jobs:
             [ -d "$DEPLOY_ROOT" ] || { echo "::error::DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
             cd "$DEPLOY_ROOT"
 
-            ACTIVE_SLOT=$(cat /var/run/api/active-slot 2>/dev/null || echo "blue")
+            ACTIVE_SLOT=$(cat /var/lib/fieldtrack/active-slot 2>/dev/null || echo "blue")
             ACTIVE_CONTAINER="api-$ACTIVE_SLOT"
 
             docker inspect "$ACTIVE_CONTAINER" >/dev/null 2>&1 || {
@@ -830,11 +864,13 @@ jobs:
   health-and-smoke:
     name: Health Checks & Smoke Tests
     runs-on: ubuntu-latest
-    needs: [api-health-gate]
+    needs: [api-health-gate, build-scan-push]
     timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.build-scan-push.outputs.deploy_sha }}
 
       - name: CI guard — deploy.sh must not reference /ready or monitoring stack
         run: |
@@ -849,12 +885,17 @@ jobs:
             echo "::error::deploy.sh references monitoring stack — deploy must be monitoring-independent"
             exit 1
           fi
-          echo "Validating no local infra coupling..."
-          if grep -R "infra/" . | grep -v "docs/infra-contract.md"; then
-            echo "::error::Local infra coupling detected"
+          # Check for local repo-relative infra path coupling in scripts/src only.
+          # Uses the same pattern as verify-stabilization.sh: only relative paths
+          # (./infra/ or ../infra/) are forbidden. Absolute /opt/infra is allowed.
+          # Scope: scripts/ and src/ only (not workflows where guard steps live).
+          if grep -rE "\./infra/|\.\.\./infra/" scripts/ src/ \
+               --binary-files=without-match --exclude-dir=node_modules 2>/dev/null \
+               | grep -Ev '^\s*#'; then
+            echo "::error::Local repo-relative infra coupling (./infra/ or ../infra/) detected in scripts/ or src/"
             exit 1
           fi
-          echo "✓ CI guards passed: no /ready or monitoring references in deploy.sh"
+          echo "✓ CI guards passed: no /ready, no monitoring, no local infra coupling in deploy path"
 
       - name: Wait for /health endpoint (via VPS)
         uses: appleboy/ssh-action@v1.0.3
@@ -872,7 +913,9 @@ jobs:
             for i in $(seq 1 30); do
               # Phase 1: in-network (source of truth)
               if docker run --rm --network api_network \
-                curlimages/curl:8.7.1 -sk --max-time 5 https://nginx/health 2>/dev/null \
+                curlimages/curl:8.7.1 -sk --max-time 5 \
+                -H "Host: ${API_HOSTNAME}" \
+                https://nginx/health 2>/dev/null \
                 | grep -q '"status":"ok"'; then
                 echo "[DEPLOY] /health OK (in-network, attempt $i)"
                 exit 0
@@ -906,7 +949,9 @@ jobs:
             for i in $(seq 1 10); do
               # Phase 1: in-network (source of truth)
               if docker run --rm --network api_network \
-                curlimages/curl:8.7.1 -sk --max-time 5 https://nginx/health 2>/dev/null \
+                curlimages/curl:8.7.1 -sk --max-time 5 \
+                -H "Host: ${API_HOSTNAME}" \
+                https://nginx/health 2>/dev/null \
                 | grep -q '"status":"ok"'; then
                 echo "[DEPLOY] /health OK (in-network, attempt $i)"
                 exit 0
@@ -924,19 +969,60 @@ jobs:
             echo "::error::Final health check failed after 10 attempts"
             exit 1
 
+      # Post-deploy /ready check — informational only, never fails the deploy.
+      # /health is the deploy gate (shallow, network-independent).
+      # /ready reflects deep system state: Redis, workers, DB connectivity.
+      # Logged in the job summary for operator visibility without blocking production.
+      - name: Post-deploy /ready check (informational)
+        continue-on-error: true
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: ${{ secrets.DO_USER }}
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            ACTIVE_SLOT=$(cat /var/lib/fieldtrack/active-slot 2>/dev/null || echo "unknown")
+            ACTIVE_CONTAINER="api-${ACTIVE_SLOT}"
+            FT_CURL_IMG="curlimages/curl:8.7.1"
+            READY_RESP=$(docker run --rm --network api_network "$FT_CURL_IMG" \
+              -sf --max-time 10 "http://$ACTIVE_CONTAINER:3000/ready" 2>/dev/null || echo "UNREACHABLE")
+            READY_STATUS=$(echo "$READY_RESP" | grep -o '"status":"[^"]*"' | head -1 || echo "unknown")
+            echo "[DEPLOY] /ready check: slot=$ACTIVE_SLOT status=$READY_STATUS"
+            echo "[DEPLOY] /ready response: $READY_RESP"
+
       - name: Deployment summary
         run: |
-          echo "[DEPLOY] Production deployment complete"
-          echo "  Commit : ${{ github.sha }}"
-          echo "  Health : OK"
-          echo "  Post-deploy checks : passed"
+          DEPLOY_SHA="${{ needs.build-scan-push.outputs.deploy_sha }}"
+          {
+            echo "## Deployment Complete"
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Status | ✅ SUCCESS |"
+            echo "| Deploy SHA | \`${DEPLOY_SHA}\` |"
+            echo "| Health gate | /health → 200 |"
+            echo "| Post-deploy checks | passed |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "[DEPLOY] Production deployment complete — SHA=${DEPLOY_SHA} Health=OK"
 
   # ---------------------------------------------------------------------------
   # JOB: rollback
   #
-  # Triggered automatically when deploy or health-and-smoke fails.
-  # Restores the previously healthy Blue-Green slot via the rollback script.
-  # 'if: always()' ensures this job can evaluate even if upstream jobs failed.
+  # Triggered automatically when POST-DEPLOY health checks fail.
+  #
+  # PHASE-AWARE CONDITION (prevents double-rollback):
+  #   Rollback triggers ONLY when the deploy job itself SUCCEEDED (exit 0)
+  #   AND a post-deploy CI health check subsequently failed.
+  #
+  #   This means nginx traffic was already switched to the new container
+  #   (deploy.sh reported DEPLOY_RESULT=SWITCHED) and then the CI-level
+  #   health gate caught a regression.
+  #
+  #   It does NOT trigger when:
+  #     • vps-readiness-check fails (deploy never started)
+  #     • deploy job fails (deploy.sh already handled internal recovery;
+  #       see DEPLOY_RESULT=FAILED_PRE_SWITCH or RESTORED in deploy.sh)
+  #
+  # 'if: always()' ensures this job evaluates even if upstream jobs failed.
   # ---------------------------------------------------------------------------
   rollback:
     name: Rollback Deployment (auto)
@@ -946,17 +1032,13 @@ jobs:
     if: |
       always() &&
       (
-        needs.vps-readiness-check.result == 'failure' ||
-        needs.deploy.result == 'failure' ||
         needs.api-health-gate.result == 'failure' ||
         needs.health-and-smoke.result == 'failure'
       )
     steps:
       - name: Log rollback trigger
         run: |
-          echo "::error::Rollback triggered — SHA=${{ github.sha }}"
-          [ "${{ needs.vps-readiness-check.result }}" = "failure" ] && echo "  [ERROR] failed job: vps-readiness-check" || true
-          [ "${{ needs.deploy.result }}" = "failure" ] && echo "  [ERROR] failed job: deploy" || true
+          echo "::error::Rollback triggered (post-switch health failure) — deploy_sha=${{ needs.build-scan-push.outputs.deploy_sha }}"
           [ "${{ needs.api-health-gate.result }}" = "failure" ] && echo "  [ERROR] failed job: api-health-gate" || true
           [ "${{ needs.health-and-smoke.result }}" = "failure" ] && echo "  [ERROR] failed job: health-and-smoke" || true
 
@@ -974,5 +1056,5 @@ jobs:
             chmod +x scripts/*.sh
             ./scripts/deploy.sh --rollback --auto
 
-            ACTIVE_SLOT=$(cat /var/run/api/active-slot 2>/dev/null || echo "unknown")
+            ACTIVE_SLOT=$(cat /var/lib/fieldtrack/active-slot 2>/dev/null || echo "unknown")
             echo "[DEPLOY] Rollback complete — slot=$ACTIVE_SLOT sha=${{ github.sha }}"

@@ -36,6 +36,9 @@ jobs:
               - 'package-lock.json'
               - 'tsconfig.json'
               - 'vitest.config.ts'
+              - 'Dockerfile'
+              - 'scripts/**'
+              - '.github/workflows/**'
 
   api-ci:
     name: API CI
@@ -111,6 +114,31 @@ jobs:
             exit 1
           fi
           echo "✅ Env contract clean — no direct process.env access outside env.ts"
+      - name: Infra contract naming guard
+        if: needs.detect-changes.outputs.api == 'true'
+        run: |
+          # Enforce canonical naming contract (docs/infra-contract.md).
+          # Scoped to production paths; workflow files are intentionally
+          # excluded so the guard never matches its own grep command.
+          FAIL=0
+
+          if grep -rE '\bfieldtrack_network\b' src/ scripts/ \
+               --include='*.ts' --include='*.sh' \
+               2>/dev/null | grep -Ev '^\s*#'; then
+            echo "::error::Forbidden network name 'fieldtrack_network' — canonical name is 'api_network'"
+            FAIL=1
+          fi
+
+          if grep -rE 'redis://localhost:[0-9]+|redis://127\.0\.0\.1:[0-9]+' \
+               src/ scripts/ .env.example \
+               --include='*.ts' --include='*.sh' --include='*.env*' \
+               2>/dev/null | grep -Ev '^\s*(//|#)'; then
+            echo "::error::localhost Redis URL in production paths — canonical URL is redis://redis:6379"
+            FAIL=1
+          fi
+
+          [ "$FAIL" -eq 0 ] || exit 1
+          echo "✅ Infra contract naming guard passed"
       - name: Dependency vulnerability scan (production deps)
         if: needs.detect-changes.outputs.api == 'true'
         run: |
@@ -150,20 +178,28 @@ jobs:
             -f Dockerfile \
             .
 
-      - name: Guard — no docker exec curl in workflows
+      - name: Guard — no docker exec curl in deploy paths
         if: needs.detect-changes.outputs.api == 'true'
         run: |
-          MATCHES=$(grep -R "docker exec .* curl" .github/workflows || true)
-          FILTERED=$(echo "$MATCHES" \
-            | grep -v 'echo "' \
-            | grep -v '^#' \
-            | grep -v 'grep -R')
-          if [ -n "$FILTERED" ]; then
-            echo "❌ Forbidden pattern: docker exec curl detected in workflows"
-            echo "$FILTERED"
+          # docker exec <container> curl is forbidden in production because:
+          #   - API containers use distroless (no curl)
+          #   - Health checks run from external curlimages/curl on api_network
+          # Search only deploy-relevant files; use word boundaries to prevent
+          # matching curl inside grep patterns, comments, or echo statements.
+          MATCHES=$(grep -rE '\bdocker exec\b.+\bcurl\b' \
+            scripts/ .github/workflows/ \
+            --include='*.sh' --include='*.yml' --include='*.yaml' \
+            2>/dev/null \
+            | grep -Ev '^\s*(#|echo |#.*)' \
+            | grep -v 'grep ' \
+            || true)
+          if [ -n "$MATCHES" ]; then
+            echo "::error::Forbidden pattern: \`docker exec ... curl\` detected in scripts/ or .github/workflows/"
+            echo "  Use: docker run --rm --network <net> curlimages/curl:8.7.1 instead"
+            echo "$MATCHES"
             exit 1
           fi
-          echo "✅ No docker exec curl patterns found"
+          echo "✓ No forbidden docker exec curl patterns in deploy paths"
 
       - name: Pull curl image
         if: needs.detect-changes.outputs.api == 'true'
@@ -307,3 +343,221 @@ jobs:
         uses: github/codeql-action/analyze@v4
         with:
           category: "codeql-lite"
+
+  # ---------------------------------------------------------------------------
+  # JOB: production-simulation
+  #
+  # Validates the image behaves correctly under production-like conditions:
+  #   - Real Docker bridge network (api_network) — same as production
+  #   - Redis container on the same network (same container DNS path)
+  #   - WORKERS_ENABLED=true (workers active, unlike CI test job)
+  #   - All probes use an EXTERNAL curlimages/curl container via Docker DNS
+  #     (no host port bindings, no docker exec — mirrors nginx→api path)
+  #
+  # Also captures the image digest for parity verification during deploy
+  # (deploy.yml's build-scan-push compares against this artifact).
+  #
+  # This job runs independently of api-ci; both must pass before merge.
+  # ---------------------------------------------------------------------------
+  production-simulation:
+    name: Production Simulation (workers + Redis + container DNS)
+    runs-on: ubuntu-latest
+    needs: [detect-changes]
+    timeout-minutes: 20
+    if: always()
+    env:
+      CONFIG_VERSION: "1"
+      APP_ENV: production
+      NODE_ENV: production
+      PORT: "3000"
+      # Use placeholder URLs — real Supabase secrets injected below.
+      # APP_BASE_URL / API_BASE_URL are intentionally non-localhost to match
+      # what a production container would see (workers read these for callbacks).
+      APP_BASE_URL: https://api.example.com
+      API_BASE_URL: https://api.example.com
+      FRONTEND_BASE_URL: https://app.example.com
+      CORS_ORIGIN: https://app.example.com
+      # Redis runs as a container named "redis" on api_network — same DNS name
+      # as production. Workers will connect; Redis unavailability is non-fatal
+      # (graceful degradation is verified, not crash-on-missing-redis).
+      REDIS_URL: redis://redis:6379
+      WORKERS_ENABLED: "true"
+      METRICS_SCRAPE_TOKEN: dummy-sim-token
+      SERVICE_NAME: fieldtrack-api-sim
+      BODY_LIMIT_BYTES: "1000000"
+      REQUEST_TIMEOUT_MS: "30000"
+      MAX_QUEUE_DEPTH: "1000"
+      MAX_POINTS_PER_SESSION: "50000"
+      MAX_SESSION_DURATION_HOURS: "168"
+      WORKER_CONCURRENCY: "1"
+      ANALYTICS_WORKER_CONCURRENCY: "2"
+      WEBHOOK_WORKER_CONCURRENCY: "2"
+      WEBHOOK_DLQ_MAX_SIZE: "10000"
+      WEBHOOK_DLQ_RETENTION_DAYS: "30"
+      WEBHOOK_MAX_PAYLOAD_BYTES: "262144"
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL_TEST }}
+      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY_TEST }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_TEST }}
+    steps:
+      - name: Skip if no API changes
+        if: needs.detect-changes.outputs.api != 'true'
+        run: |
+          echo "No API changes — skipping production simulation"
+          echo "✓ Production Simulation (skipped — no relevant changes)"
+
+      - uses: actions/checkout@v5
+        if: needs.detect-changes.outputs.api == 'true'
+
+      - name: Pull base images
+        if: needs.detect-changes.outputs.api == 'true'
+        run: |
+          docker pull node:24.2.0-bookworm-slim
+          docker pull gcr.io/distroless/nodejs24-debian12:nonroot
+
+      - name: Build production image
+        if: needs.detect-changes.outputs.api == 'true'
+        run: |
+          docker build \
+            --pull \
+            --target production \
+            --build-arg NODE_ENV=production \
+            --build-arg CACHE_BUSTER=${{ hashFiles('**/package-lock.json') }} \
+            --cache-from=type=gha,scope=production \
+            --cache-to=type=gha,mode=max,scope=production \
+            -t fieldtrack-api:sim \
+            -f Dockerfile \
+            .
+
+      - name: Create production-like network and start Redis
+        if: needs.detect-changes.outputs.api == 'true'
+        run: |
+          # Create the same network name used in production.
+          docker network create api_network
+
+          # Start Redis on api_network using the same container DNS name
+          # production uses (workers connect via REDIS_URL=redis://redis:6379).
+          docker run -d \
+            --name redis \
+            --network api_network \
+            redis:7-alpine
+
+          # Wait up to 15 s for Redis to accept connections.
+          for i in $(seq 1 15); do
+            if docker run --rm --network api_network redis:7-alpine \
+                redis-cli -h redis ping 2>/dev/null | grep -q PONG; then
+              echo "Redis ready (attempt $i)"
+              break
+            fi
+            [ "$i" -eq 15 ] && { echo "::error::Redis did not become ready"; exit 1; }
+            sleep 1
+          done
+
+      - name: Start API (workers enabled, api_network, no host ports)
+        if: needs.detect-changes.outputs.api == 'true'
+        run: |
+          # NO -p flags — all comms via api_network Docker DNS, same as production.
+          docker run -d \
+            --name api-blue \
+            --network api_network \
+            -e CONFIG_VERSION \
+            -e APP_ENV \
+            -e NODE_ENV \
+            -e PORT \
+            -e APP_BASE_URL \
+            -e API_BASE_URL \
+            -e FRONTEND_BASE_URL \
+            -e CORS_ORIGIN \
+            -e REDIS_URL \
+            -e WORKERS_ENABLED \
+            -e METRICS_SCRAPE_TOKEN \
+            -e SERVICE_NAME \
+            -e BODY_LIMIT_BYTES \
+            -e REQUEST_TIMEOUT_MS \
+            -e MAX_QUEUE_DEPTH \
+            -e MAX_POINTS_PER_SESSION \
+            -e MAX_SESSION_DURATION_HOURS \
+            -e WORKER_CONCURRENCY \
+            -e ANALYTICS_WORKER_CONCURRENCY \
+            -e WEBHOOK_WORKER_CONCURRENCY \
+            -e WEBHOOK_DLQ_MAX_SIZE \
+            -e WEBHOOK_DLQ_RETENTION_DAYS \
+            -e WEBHOOK_MAX_PAYLOAD_BYTES \
+            -e SUPABASE_URL \
+            -e SUPABASE_ANON_KEY \
+            -e SUPABASE_SERVICE_ROLE_KEY \
+            fieldtrack-api:sim
+
+      - name: Pull curl image for external probing
+        if: needs.detect-changes.outputs.api == 'true'
+        run: docker pull curlimages/curl:8.7.1
+
+      - name: Health check via container DNS (production network path)
+        if: needs.detect-changes.outputs.api == 'true'
+        run: |
+          trap 'docker rm -f api-blue redis 2>/dev/null || true; docker network rm api_network 2>/dev/null || true' EXIT
+
+          # Verify container actually started.
+          docker ps | grep api-blue || {
+            echo "::error::api-blue container failed to start"
+            docker logs api-blue --tail 50
+            exit 1
+          }
+
+          # External health probe — curlimages/curl on api_network.
+          # This is the same network path nginx uses in production:
+          #   nginx → api_network → api-blue:3000
+          # No host port, no docker exec — container tooling not assumed.
+          STATUS="000"
+          for i in $(seq 1 15); do
+            STATUS=$(docker run --rm \
+              --network api_network \
+              curlimages/curl:8.7.1 \
+              -s -o /dev/null -w "%{http_code}" \
+              "http://api-blue:3000/health" 2>/dev/null || echo "000")
+            if [ "$STATUS" = "200" ]; then
+              echo "✓ /health → 200 (attempt $i, container DNS, api_network)"
+              break
+            fi
+            echo "Attempt $i: HTTP $STATUS — waiting..."
+            sleep 2
+          done
+
+          if [ "$STATUS" != "200" ]; then
+            echo "::error::/health returned HTTP $STATUS after 30s (expected 200)"
+            docker logs api-blue --tail 50
+            exit 1
+          fi
+
+          # Smoke: auth guards must reject unauthenticated requests with 401.
+          for ENDPOINT in /admin/audit-log /admin/webhook-dlq; do
+            CODE=$(docker run --rm \
+              --network api_network \
+              curlimages/curl:8.7.1 \
+              -s -o /dev/null -w "%{http_code}" \
+              "http://api-blue:3000${ENDPOINT}" 2>/dev/null || echo "000")
+            if [ "$CODE" != "401" ]; then
+              echo "::error::${ENDPOINT} expected 401 (unauthenticated), got ${CODE}"
+              docker logs api-blue --tail 50
+              exit 1
+            fi
+            echo "✓ ${ENDPOINT} → 401 (auth guard verified via container DNS)"
+          done
+
+          echo "✓ Production simulation passed (workers enabled, Redis connected, container DNS routing)"
+
+      - name: Capture image digest for parity check
+        id: sim-digest
+        if: needs.detect-changes.outputs.api == 'true'
+        run: |
+          DIGEST=$(docker inspect fieldtrack-api:sim --format='{{.Id}}' 2>/dev/null || echo "unknown")
+          echo "$DIGEST" > /tmp/image-digest.txt
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "Simulation image digest: $DIGEST"
+
+      - name: Upload image digest artifact (for deploy parity check)
+        if: needs.detect-changes.outputs.api == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-digest-pr-${{ github.event.number }}
+          path: /tmp/image-digest.txt
+          retention-days: 7
