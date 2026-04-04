@@ -184,28 +184,29 @@ jobs:
             -f Dockerfile \
             .
 
-      - name: Guard — no docker exec curl in deploy paths
+      - name: Guard — no in-container curl via docker exec
         if: needs.detect-changes.outputs.api == 'true'
         run: |
-          # docker exec <container> curl is forbidden in production because:
+          # Invoking curl inside a running API container (docker's exec + curl) is forbidden because:
           #   - API containers use distroless (no curl)
           #   - Health checks run from external curlimages/curl on api_network
-          # Search only deploy-relevant files; use word boundaries to prevent
-          # matching curl inside grep patterns, comments, or echo statements.
+          # grep -r prints path:line; filter on content after the first colon only (not ^# on whole line).
           MATCHES=$(grep -rE '\bdocker exec\b.+\bcurl\b' \
             scripts/ .github/workflows/ \
             --include='*.sh' --include='*.yml' --include='*.yaml' \
             2>/dev/null \
-            | grep -Ev '^\s*(#|echo |#.*)' \
-            | grep -v 'grep ' \
+            | grep -Ev '^[^:]+:\s*#' \
+            | grep -Ev '^[^:]+:\s*echo' \
+            | grep -Ev '^[^:]+:\s*- name:' \
+            | grep -Fv 'MATCHES=$(grep' \
             || true)
           if [ -n "$MATCHES" ]; then
-            echo "::error::Forbidden pattern: \`docker exec ... curl\` detected in scripts/ or .github/workflows/"
+            echo "::error::Forbidden pattern: docker exec into a container to run curl (see workflow guard in pr.yml)"
             echo "  Use: docker run --rm --network <net> curlimages/curl:8.7.1 instead"
             echo "$MATCHES"
             exit 1
           fi
-          echo "✓ No forbidden docker exec curl patterns in deploy paths"
+          echo "✓ No forbidden in-container curl via exec in deploy paths"
 
       - name: Pull curl image
         if: needs.detect-changes.outputs.api == 'true'
