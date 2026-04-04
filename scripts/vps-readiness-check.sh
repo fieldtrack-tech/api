@@ -33,7 +33,7 @@ set -euo pipefail
 
 DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
 NETWORK="api_network"
-RUNTIME_DIR="/var/run/api"
+RUNTIME_DIR="/var/lib/fieldtrack"
 LOG_DIR="/var/log/api"
 
 # ── Colour helpers ─────────────────────────────────────────────────────────────
@@ -58,7 +58,7 @@ echo ""
 # ── CHECK 1: DEPLOY_ROOT exists ────────────────────────────────────────────────
 echo "--- CHECK 1: Deploy root directory ---"
 if [ ! -d "$DEPLOY_ROOT" ]; then
-  fail "DEPLOY_ROOT not found: $DEPLOY_ROOT — VPS may not be provisioned. Run vps-setup.sh first."
+  fail "DEPLOY_ROOT not found: $DEPLOY_ROOT — ensure infra bootstrap has been run and DEPLOY_ROOT is correct."
 fi
 ok "DEPLOY_ROOT exists: $DEPLOY_ROOT"
 
@@ -86,20 +86,6 @@ if ! docker network ls --format '{{.Name}}' | grep -Eq "^${NETWORK}$"; then
   ok "Network '$NETWORK' created."
 else
   ok "Network '$NETWORK' exists."
-fi
-# ── AUTO-FIX: Kill ghost docker-proxy processes that may hold stale ports ──────
-#
-# docker-proxy processes can linger after container removal and hold ports
-# 80/443 as ghosts. They are safe to kill (Docker recreates them as needed).
-echo ""
-echo "--- AUTO-FIX: ghost docker-proxy cleanup ---"
-if pgrep -x docker-proxy >/dev/null 2>&1; then
-  warn "Ghost docker-proxy processes detected — killing stale port holders."
-  sudo pkill -x docker-proxy 2>/dev/null || true
-  sleep 1
-  ok "Ghost docker-proxy processes cleared."
-else
-  ok "No ghost docker-proxy processes."
 fi
 # ── CHECK 4: Ports 80 and 443 — no non-docker processes ──────────────────────
 #
@@ -188,13 +174,21 @@ for f in "${REQUIRED_ENV_FILES[@]}"; do
     echo "  See docs/env-contract.md for required variables."
   else
     ok "Env file present: $f"
+    # Env contract spot-check: verify critical variables are set (not empty).
+    # A valid .env file existence alone is insufficient — missing values cause
+    # the API to start then crash after nginx has already been reloaded.
+    for var in API_BASE_URL CORS_ORIGIN; do
+      if ! grep -qE "^${var}=.+" "$DEPLOY_ROOT/$f" 2>/dev/null; then
+        record_failure "Env contract violation: '$var' is missing or empty in $DEPLOY_ROOT/$f"
+        echo "  See docs/env-contract.md for required variables."
+      fi
+    done
+    ok "Env contract spot-check passed (API_BASE_URL, CORS_ORIGIN present)."
   fi
 done
 
-# .env.monitoring is optional (monitoring-sync.sh self-heals from example)
-if [ ! -f "$DEPLOY_ROOT/infra/.env.monitoring" ]; then
-  warn ".env.monitoring not found — monitoring-sync.sh will create it from example during deploy."
-fi
+API_BASE_URL_VALUE="$(grep -E '^API_BASE_URL=' "$DEPLOY_ROOT/.env" 2>/dev/null | head -1 | cut -d'=' -f2- || true)"
+API_HOSTNAME="${API_HOSTNAME:-$(printf '%s' "$API_BASE_URL_VALUE" | sed -E 's|^https?://||' | cut -d'/' -f1)}"
 
 # ── CHECK 7: Runtime state directories ────────────────────────────────────────
 echo ""
@@ -210,30 +204,14 @@ for dir in "$RUNTIME_DIR" "$LOG_DIR"; do
   fi
 done
 
-# ── CHECK 8: Nginx live config directory ──────────────────────────────────────
-echo ""
-echo "--- CHECK 8: Nginx live config directory ---"
-NGINX_LIVE_DIR="$DEPLOY_ROOT/infra/nginx/live"
-NGINX_BACKUP_DIR="$DEPLOY_ROOT/infra/nginx/backup"
-
-for dir in "$NGINX_LIVE_DIR" "$NGINX_BACKUP_DIR"; do
-  if [ ! -d "$dir" ]; then
-    warn "Nginx directory missing: $dir — creating it."
-    mkdir -p "$dir"
-    ok "Created: $dir"
-  else
-    ok "Directory exists: $dir"
-  fi
-done
-
-# ── CHECK 9: Network attachment for expected containers ───────────────────────
+# ── CHECK 8: Network attachment enforcement ───────────────────────────────────
 #
-# If nginx, prometheus, grafana, or alertmanager are running, they MUST be
+# If nginx is running, it MUST be
 # attached to api_network. If they're not, Docker DNS resolution will fail
 # and api-blue/api-green will be unreachable by name.
 echo ""
-echo "--- CHECK 9: Network attachment enforcement ---"
-NETWORK_REQUIRED=(nginx prometheus grafana alertmanager)
+echo "--- CHECK 8: Network attachment enforcement ---"
+NETWORK_REQUIRED=(nginx)
 for c in "${NETWORK_REQUIRED[@]}"; do
   if docker inspect "$c" >/dev/null 2>&1; then
     if ! docker inspect "$c" --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' \
@@ -249,9 +227,66 @@ for c in "${NETWORK_REQUIRED[@]}"; do
   fi
 done
 
-# ── CHECK 10: Disk space (warn if < 2GB free) ──────────────────────────────────
+# ── CHECK 9: Nginx container exists and is reachable ─────────────────────────
+#
+# nginx is the sole entry point for all API traffic (Cloudflare → nginx → api).
+# Deploying without a running, reachable nginx means zero traffic will reach
+# the new container even after a successful switch.
+#
+# Hard failure: nginx container must exist before deployment is allowed.
+# Note: reachability check is advisory (nginx may not serve requests until
+# an API container is first deployed).
 echo ""
-echo "--- CHECK 10: Disk space ---"
+echo "--- CHECK 9: Nginx container ---"
+if ! docker inspect nginx >/dev/null 2>&1; then
+  record_failure "nginx container not found — required for deployment routing."
+  echo "  nginx must be running before deploy can proceed."
+  echo "  Fix: docker compose -f docker-compose.nginx.yml up -d"
+else
+  ok "nginx container exists."
+  # Advisory in-network health probe — nginx may return non-200 before
+  # first API deploy (upstream not yet configured), so warn but don't fail.
+  FT_CURL_IMG="curlimages/curl:8.7.1"
+  if [ -z "${API_HOSTNAME}" ]; then
+    warn "Skipping advisory nginx probe because API_HOSTNAME could not be derived from .env."
+  elif docker run --rm --network api_network "$FT_CURL_IMG" \
+       -skf --max-time 5 -H "Host: ${API_HOSTNAME}" "https://nginx/health" >/dev/null 2>&1 \
+     || docker run --rm --network api_network "$FT_CURL_IMG" \
+       -sf --max-time 5 -H "Host: ${API_HOSTNAME}" "http://nginx/health" >/dev/null 2>&1; then
+    ok "nginx is reachable on api_network with Host=${API_HOSTNAME}."
+  else
+    warn "nginx running but health probe returned non-2xx — may be normal before first API deploy."
+  fi
+fi
+
+# ── CHECK 10: Redis reachability (if redis container is running) ───────────────
+#
+# If a Redis container named 'redis' is running, validate it is attached to
+# api_network and responding to PING. Workers will fail to start if Redis is
+# present but unreachable via Docker DNS.
+echo ""
+echo "--- CHECK 10: Redis (if running) ---"
+if docker inspect redis >/dev/null 2>&1; then
+  if ! docker inspect redis \
+       --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' \
+       2>/dev/null | grep -q 'api_network'; then
+    record_failure "redis container is running but NOT attached to api_network."
+    echo "  Fix: docker network connect api_network redis"
+  else
+    if docker exec redis redis-cli ping 2>/dev/null | grep -q PONG; then
+      ok "Redis is reachable on api_network."
+    else
+      record_failure "redis container is running on api_network but not responding to PING."
+      echo "  Check redis container logs: docker logs redis"
+    fi
+  fi
+else
+  ok "Redis container not running — skipping check (validated at application startup)."
+fi
+
+# ── CHECK 11: Disk space (warn if < 2GB free) ———————————————————————————————
+echo ""
+echo "--- CHECK 11: Disk space ---"
 FREE_KB=$(df -k / | awk 'NR==2 {print $4}')
 FREE_GB=$(awk "BEGIN {printf \"%.1f\", $FREE_KB/1024/1024}")
 if [ "$FREE_KB" -lt 2097152 ]; then
