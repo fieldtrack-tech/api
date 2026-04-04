@@ -272,8 +272,7 @@ jobs:
       - name: Infra contract naming guard
         run: |
           # Enforce canonical naming contract (docs/infra-contract.md).
-          # Scoped to production paths only. Workflow files are intentionally
-          # excluded so the guard never matches its own grep command or logs.
+          # Redis guard: scan the repo but skip docs, tests, markdown, and known local-dev fixtures.
           FAIL=0
 
           # Guard 1: no stale network name (fieldtrack_network is not the canonical name)
@@ -284,12 +283,18 @@ jobs:
             FAIL=1
           fi
 
-          # Guard 2: no localhost Redis in production paths
-          # Excludes: tests/ (unit/integration tests run on host, localhost is correct there)
-          if grep -rE 'redis://localhost:[0-9]+|redis://127\.0\.0\.1:[0-9]+' \
-               src/ scripts/ .env.example \
-               --include='*.ts' --include='*.sh' --include='*.env*' \
-               2>/dev/null | grep -Ev '^\s*(//|#)'; then
+          # Guard 2: no localhost Redis URLs outside allowed paths (see docs/infra-contract.md)
+          if grep -rE 'redis://localhost:[0-9]+|redis://127\.0\.0\.1:[0-9]+' . \
+               --exclude-dir=docs \
+               --exclude-dir=tests \
+               --exclude-dir=node_modules \
+               --exclude-dir=.git \
+               --exclude-dir=codeql-db \
+               --exclude='*.md' \
+               --exclude='*.test.ts' \
+               --exclude='*.unit.ts' \
+               --exclude='.env.example.dev' \
+               2>/dev/null | grep -Fv 'env-setup.ts' | grep -q .; then
             echo "::error::localhost Redis URL found in production paths — canonical URL is redis://redis:6379"
             FAIL=1
           fi

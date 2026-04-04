@@ -118,8 +118,7 @@ jobs:
         if: needs.detect-changes.outputs.api == 'true'
         run: |
           # Enforce canonical naming contract (docs/infra-contract.md).
-          # Scoped to production paths; workflow files are intentionally
-          # excluded so the guard never matches its own grep command.
+          # Redis guard: scan the repo but skip docs, tests, markdown, and known local-dev fixtures.
           FAIL=0
 
           if grep -rE '\bfieldtrack_network\b' src/ scripts/ \
@@ -129,10 +128,17 @@ jobs:
             FAIL=1
           fi
 
-          if grep -rE 'redis://localhost:[0-9]+|redis://127\.0\.0\.1:[0-9]+' \
-               src/ scripts/ .env.example \
-               --include='*.ts' --include='*.sh' --include='*.env*' \
-               2>/dev/null | grep -Ev '^\s*(//|#)'; then
+          if grep -rE 'redis://localhost:[0-9]+|redis://127\.0\.0\.1:[0-9]+' . \
+               --exclude-dir=docs \
+               --exclude-dir=tests \
+               --exclude-dir=node_modules \
+               --exclude-dir=.git \
+               --exclude-dir=codeql-db \
+               --exclude='*.md' \
+               --exclude='*.test.ts' \
+               --exclude='*.unit.ts' \
+               --exclude='.env.example.dev' \
+               2>/dev/null | grep -Fv 'env-setup.ts' | grep -q .; then
             echo "::error::localhost Redis URL in production paths — canonical URL is redis://redis:6379"
             FAIL=1
           fi
