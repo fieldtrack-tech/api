@@ -37,10 +37,11 @@ const sdk = new NodeSDK({
     }),
     instrumentations: [
         getNodeAutoInstrumentations({
-            // Disable noisy fs instrumentation; keep HTTP + Fastify auto-tracing
+            // Disable noisy fs instrumentation; keep HTTP + auto-tracing
+            // Note: @opentelemetry/instrumentation-fastify was removed in v0.75.0
+            // HTTP instrumentation covers Fastify requests via the underlying http module
             "@opentelemetry/instrumentation-fs": { enabled: false },
             "@opentelemetry/instrumentation-http": { enabled: true },
-            "@opentelemetry/instrumentation-fastify": { enabled: true },
             "@opentelemetry/instrumentation-dns": { enabled: true },
             "@opentelemetry/instrumentation-undici": { enabled: true },
             "@opentelemetry/instrumentation-ioredis": { enabled: true },

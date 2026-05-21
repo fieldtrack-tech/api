@@ -103,7 +103,7 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
 
         const [redisResult, supabaseResult, bullmqResult] = await Promise.allSettled([
             (async () => {
-                const redisClient = await distanceQueue.waitUntilReady();
+                const redisClient = (await distanceQueue.waitUntilReady()) as unknown as import("ioredis").Redis;
                 await redisClient.ping();
             })(),
             (async () => {
