@@ -9,8 +9,8 @@ import { orgSessionsQuerySchema } from "../attendance/attendance.schema.js";
 
 // ─── Query schema ─────────────────────────────────────────────────────────────
 
-// TODO (future phase): replace offset pagination with cursor-based pagination
-// to support large datasets without heavy DB scans.
+// Future scalability: replace offset pagination with cursor-based pagination
+// when admin session history moves beyond current snapshot-sized reads.
 const adminSessionsQuerySchema = orgSessionsQuerySchema.extend({
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });

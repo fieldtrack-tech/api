@@ -1,136 +1,89 @@
-# Deployment Guide
+# API Deployment Guide
 
-This document covers deploying FieldTrack API to a Linux VPS using the included blue-green deployment system.
+This guide reflects the implemented production deployment flow for the API repository.
 
-> **Scope:** This document covers the API only. Nginx configuration, TLS, and the monitoring stack are managed by the **infra repository**.
+## CI/CD Flow (GitHub Actions)
 
----
+Primary workflow: `.github/workflows/deploy.yml`
 
-## Prerequisites
+Pipeline behavior:
 
-- A Linux VPS (Ubuntu 22.04 recommended) accessible via SSH
-- A GitHub Container Registry (GHCR) account with push access to the repository
-- GitHub Actions secrets configured (see [CI/CD Setup](#cicd-setup))
-- Docker installed on the VPS
-- Nginx already running and configured via the **infra repository**
+1. `codeql-gate`
+   - deploy triggers from CodeQL deep-scan completion on `master`
+   - blocked if scan conclusion is not `success`
+2. `validate` + `test-api` + `infra-leakage-guard`
+3. `build-scan-push`
+   - Docker build
+   - image scanning
+   - push to GHCR
+4. readiness/deploy jobs execute VPS deployment using `scripts/deploy.sh`
+5. post-deploy health and smoke checks
+6. rollback path on deploy/smoke failure
 
----
+## Docker Build and Runtime
 
-## API Deployment
+Image is built in CI and tagged by commit SHA.
 
-1. SSH into VPS
-2. Ensure nginx is running (managed via infra repository)
-3. Copy `.env.example` to `.env` and fill in all values
-4. Deploy: `./scripts/deploy.sh <sha>`
-5. Confirm health: `curl https://<domain>/health`
+Deployment script pulls the target image and starts it in inactive blue/green slot.
 
-## Rollback
+Important deploy invariant from `scripts/deploy.sh`:
 
-```bash
-./scripts/deploy.sh --rollback           # interactive
-./scripts/deploy.sh --rollback --auto    # non-interactive (CI)
-```
+- deployment success is based on container startup and `/health` routing checks
+- script intentionally does not gate success on `/ready`
 
-## Monitoring
+## Blue-Green Deploy Model
 
-The observability stack (Prometheus, Grafana, Loki, Tempo) is **handled by the infra repository**. The API exposes:
-- `GET /metrics` — Prometheus-format metrics (protected by `METRICS_SCRAPE_TOKEN`)
-- Traces exported via OTLP to `TEMPO_ENDPOINT`
+Slots:
 
----
+- `api-blue`
+- `api-green`
 
-## Blue-Green Deployment
+Flow:
 
-The deployment uses a blue-green strategy for zero-downtime releases.
+1. resolve currently active slot
+2. start/update inactive slot with new image
+3. validate container health
+4. switch nginx routing to new slot
+5. validate routed `/health`
+6. remove old slot after success
 
-### How It Works
+State files and lock handling are maintained by deploy script for deterministic slot switching and recovery behavior.
 
-The VPS keeps **two named slots** (`api-blue`, `api-green`). Only the active slot receives traffic through nginx over `api_network`.
-The API containers do **not** bind host ports.
+## Health Checks
 
-On each deploy:
+API endpoints:
 
-1. The new image is pulled from GHCR
-2. The **inactive** container is replaced with the new image
-3. The new container is health-checked via `GET /health`
-4. Nginx upstream is switched to the new container (`nginx -s reload`)
-5. The previously active container is stopped and removed
-6. The deployed SHA is prepended to `.deploy_history` (keeps last 5)
+- `GET /health`: liveness/deploy gate
+- `GET /ready`: deep dependency check (informational for ops, not deploy gate)
 
-### Manual Deploy
+Nginx and infra health are managed by infra repo and include `/infra/health` for proxy liveness.
 
-```bash
-# SSH into the VPS
-cd $HOME/api
+## Rollback Logic
 
-# Deploy a specific image SHA (e.g. from CI output)
-./scripts/deploy.sh a4f91c2
-```
+`scripts/deploy.sh` supports:
 
----
+- interactive rollback: `--rollback`
+- non-interactive rollback: `--rollback --auto`
 
-## Rollback
+Deploy outcomes are phase-aware and emit explicit result states.
 
-To instantly revert to the previous deployment:
+Rollback is attempted automatically on failed post-switch validation paths.
+
+## Manual Deploy Commands
 
 ```bash
-cd $HOME/api
+./scripts/deploy.sh <sha>
 ./scripts/deploy.sh --rollback
+./scripts/deploy.sh --rollback --auto
 ```
 
-The script:
-1. Reads `.deploy_history` (requires at least 2 recorded deployments)
-2. Displays the full history with current/target markers
-3. Prompts for confirmation before proceeding
-4. Redeploys the previous SHA — no rebuild, image already in GHCR
+## Prerequisites on VPS
 
-**Typical rollback time: under 10 seconds.**
+Managed primarily by infra repository:
 
-For full rollback system documentation, see [ROLLBACK_SYSTEM.md](ROLLBACK_SYSTEM.md).
+- nginx deployed and healthy
+- redis deployed and reachable
+- `api_network` Docker network present
+- infra path contracts available under configured infra root
 
----
-
-## Environment Variables
-
-Copy `.env.example` to `.env` on the VPS and fill in all values before the first deploy.
-
-See [README.md](../README.md) and [env-contract.md](env-contract.md) for the full variable reference.
-
----
-
-## Health Endpoints
-
-| Endpoint | Purpose | Deploy gate |
-|----------|---------|-------------|
-| `GET /health` | Liveness — returns `{"status":"ok"}` after bootstrap | **YES** |
-| `GET /ready` | Dependency check (Redis + Supabase) | NO — informational only |
-
-The deploy script uses `/health` exclusively. `/ready` failing does not block a deployment.
-
----
-
-## Troubleshooting
-
-**Deployment hangs on health check**  
-The new container failed to start. Check Docker logs:
-```bash
-docker logs api-green   # or api-blue
-```
-
-**Rollback fails: "insufficient deployment history"**  
-Only one deployment has been recorded. Deploy manually with a known-good SHA:
-```bash
-./scripts/deploy.sh <known-good-sha>
-```
-
-**Container image not found in GHCR**  
-The SHA must match a tag pushed to GHCR. Verify with:
-```bash
-docker pull ghcr.io/fieldtrack-tech/api:<sha>
-```
-
-**Nginx fails to reload**  
-Nginx is managed by the infra repository. Check its configuration and reload there.
-
-**API starts but /ready fails**  
-Acceptable — Redis or Supabase may be temporarily unavailable. The deploy is still considered successful if `/health` returns 200.
+Without these, API deployment will fail preflight validation.
