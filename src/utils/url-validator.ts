@@ -22,7 +22,7 @@
  * reject private IPs there (defense-in-depth). This validator is the first
  * gate, not the only one.
  *
- * TODO(Phase 25 — delivery worker HTTP client):
+ * Future delivery-worker HTTP client hardening:
  *   Resolve the webhook hostname immediately before opening the outbound
  *   TCP connection and validate the resolved IP against the same private
  *   ranges checked here.  This closes the DNS rebinding window:

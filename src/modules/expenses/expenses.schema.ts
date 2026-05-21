@@ -47,8 +47,8 @@ export type UpdateExpenseStatusBody = z.infer<
   typeof updateExpenseStatusBodySchema
 >;
 
-// TODO (future phase): replace offset pagination with cursor-based pagination
-// to support large datasets without heavy DB scans.
+// Future scalability: replace offset pagination with cursor-based pagination
+// for very large expense histories.
 export const expensePaginationSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(50),

@@ -36,7 +36,8 @@ export const createLocationSchema = z.object({
      * Must be a non-negative integer. Monotonic increase per session is expected but
      * not enforced here — the service layer validates against the session start time.
      *
-     * TODO (post-mobile stabilisation): add DB NOT NULL + CHECK (sequence_number >= 0)
+     * Future hardening after mobile stabilization: add DB NOT NULL +
+     * CHECK (sequence_number >= 0).
      */
     sequence_number: z.number().int().min(0, "sequence_number must be >= 0").optional(),
 });
