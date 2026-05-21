@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import type { Redis } from "ioredis";
 import { distanceQueue } from "../workers/distance.queue.js";
 import { authenticate } from "../middleware/auth.js";
 import { env } from "../config/env.js";
@@ -54,7 +55,7 @@ export async function debugRoutes(app: FastifyInstance): Promise<void> {
         // Reuse the ioredis connection that BullMQ already owns.
         // waitUntilReady() resolves to the same RedisClient instance used by
         // the queue — no new TCP connection is opened.
-        const redisClient = await distanceQueue.waitUntilReady();
+        const redisClient = (await distanceQueue.waitUntilReady()) as unknown as Redis;
         const pong = await redisClient.ping();
 
         request.log.info({ redis: pong }, "debug/redis ping succeeded");
