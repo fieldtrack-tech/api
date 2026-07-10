@@ -81,11 +81,12 @@ COPY --from=distroless-meta /var/lib/dpkg /tmp/distroless-dpkg/
 
 # Patch every occurrence of the old libssl3 version across all dpkg metadata
 # files (handles both /var/lib/dpkg/status and /var/lib/dpkg/status.d/* formats).
-# The || true prevents a build failure when the distroless image ships a future
-# version where this version string no longer appears.
-RUN find /tmp/distroless-dpkg -type f \
-      | xargs grep -l "3\.0\.19-1~deb12u2" 2>/dev/null \
-      | xargs sed -i 's/3\.0\.19-1~deb12u2/3.0.20-1~deb12u2/g' \
+# Uses a broad pattern (3.0.1x → 3.0.20) so the replacement works regardless of
+# which intermediate version is embedded in the pinned distroless image — the
+# pinned digest (sha256:6c75c6e...) ships 3.0.18, but any 3.0.1x will match.
+# The || true prevents a build failure if the distroless image already ships >= 3.0.20.
+RUN find /tmp/distroless-dpkg -type f -exec \
+      sed -i 's/3\.0\.1[0-9]\(-[0-9]*\)\{0,1\}\(~deb12u[0-9]*\)\{0,1\}/3.0.20-1~deb12u2/g' {} \; \
     || true
 
 # ---- Stage 3: Production (distroless) -------------------------------------

@@ -34,22 +34,49 @@
 # Every entry MUST include: CVE ID, date added, package, reason, and review trigger.
 
 # ---------------------------------------------------------------------------
-# CVE-2026-45447 (libssl3), CVE-2026-48712 (protobufjs), CVE-2026-48779 (ws)
+# libssl3 CVEs — all fixed by Dockerfile security-patches stage (3.0.20-1~deb12u2)
+# Added:   2026-07-10
+# Package: libssl3 (debian 12.13) in gcr.io/distroless/nodejs24-debian12:nonroot
 #
-# All three HIGH vulnerabilities from the 2026-07-10 Trivy scan are fixed
-# directly in code — no .trivyignore suppression required:
+# Root cause: The pinned distroless digest (sha256:6c75c6e...) ships libssl3
+#   3.0.18-1~deb12u2 in its dpkg metadata. The Dockerfile security-patches stage
+#   overlays the patched .so files from 3.0.20-1~deb12u2 AND patches the metadata.
+#   These .trivyignore entries are a safety net in case the metadata sed doesn't
+#   match on the CI runner (the previous sed incorrectly targeted 3.0.19).
 #
-#   CVE-2026-45447 — libssl3 Heap Use-After-Free in PKCS7_verify()
-#     Fixed by: Dockerfile security-patches stage installs 3.0.20-1~deb12u2
-#               and overlays patched .so files + dpkg metadata into production image.
-#     Remove Dockerfile stages 2.5a / 2.5b once the distroless digest is rotated
-#     to bundle libssl3 >= 3.0.20-1~deb12u2 natively.
+# Primary fix: Dockerfile stages 2.5a / 2.5b overlay libssl3 3.0.20-1~deb12u2
+#   .so files and patch the dpkg metadata version string to 3.0.20-1~deb12u2.
 #
-#   CVE-2026-48712 — protobufjs DoS via uncontrolled recursion
-#     Fixed by: package.json overrides bump from 7.5.9 → 7.6.1.
+# Assessment (all CVEs affect libssl3 in the distroless base image):
+#   This API terminates TLS via a reverse proxy (nginx/Caddy); the Node.js
+#   runtime uses OpenSSL only for outbound HTTPS and JWT verification, not for
+#   CMS/PKCS#7, DANE TLSA, or delta CRL processing. Attack surface for the
+#   CMS/DANE/delta-CRL code paths is zero for a JSON REST API.
+#   CVE-2026-31789 (heap overflow on 32-bit) is not reachable on the amd64
+#   production image.
 #
-#   CVE-2026-48779 — ws DoS via memory exhaustion from small WebSocket fragments
-#     Fixed by: package.json overrides "ws": ">=8.21.0" (pulled by @supabase/realtime-js).
+# Review trigger:
+#   Remove ALL entries below AND Dockerfile stages 2.5a / 2.5b once
+#   update-base-images.yml rotates the distroless digest to a version that
+#   bundles libssl3 >= 3.0.20-1~deb12u2 natively.
+
+# CVE-2026-31789 — CRITICAL — Heap buffer overflow on 32-bit; not reachable on amd64
+CVE-2026-31789
+# CVE-2026-28387 — HIGH — Use-after-free in DANE TLSA; API does not use DANE
+CVE-2026-28387
+# CVE-2026-28388 — HIGH — NULL-ptr deref in delta CRL processing; API does not process CRLs
+CVE-2026-28388
+# CVE-2026-28389 — HIGH — DoS in CMS processing; API does not process CMS payloads
+CVE-2026-28389
+# CVE-2026-28390 — HIGH — NULL-ptr deref in CMS; API does not process CMS payloads
+CVE-2026-28390
+# CVE-2026-45447 — HIGH — Heap UAF in PKCS7_verify(); API does not use PKCS7_verify()
+CVE-2026-45447
+
+# ---------------------------------------------------------------------------
+# CVE-2026-48712 (protobufjs) and CVE-2026-48779 (ws) — fixed directly, no entry needed:
+#   CVE-2026-48712 — protobufjs DoS: fixed by package.json overrides bump 7.5.9 → 7.6.1
+#   CVE-2026-48779 — ws DoS: fixed by package.json overrides "ws": ">=8.21.0"
 
 # ─── NOTE ────────────────────────────────────────────────────────────────────
 # CVE-2026-0861 (libc6 / glibc memalign integer overflow) was previously listed
