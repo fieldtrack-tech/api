@@ -11,9 +11,13 @@
 #   are pinned by digest. The weekly update-base-images.yml workflow rotates digests
 #   automatically, pulling in security patches as soon as Google publishes them.
 #
-# npm dependency status (last verified: 2026-03-28):
+# npm dependency status (last verified: 2026-07-10):
 #   npm audit --omit=dev reports 0 vulnerabilities.
-#   Resolved in this pass (all were MODERATE, none HIGH/CRITICAL):
+#   Resolved in this pass:
+#     - protobufjs@7.5.9 (CVE-2026-48712 HIGH) → patched via overrides bump to 7.6.1
+#     - ws@8.20.1 (CVE-2026-48779 HIGH) → patched via overrides to >=8.21.0
+#     - libssl3 (CVE-2026-45447 HIGH) → patched via Dockerfile security-patches stage (3.0.20-1~deb12u2)
+#   Previously resolved (MODERATE, no entry needed):
 #     - fastify@<=5.8.2 (GHSA-444r-cwp2-x5xf) → patched by upgrade to 5.8.3+
 #     - brace-expansion@4.0.0-5.0.4 (GHSA-f886-m6hf-6m8v) → patched via lockfile
 #     - yaml@2.0.0-2.8.2 (GHSA-48c2-rrv3-qjmp) → patched via lockfile
@@ -30,34 +34,22 @@
 # Every entry MUST include: CVE ID, date added, package, reason, and review trigger.
 
 # ---------------------------------------------------------------------------
-# CVE-2026-28390
-# Added:   2026-04-10
-# Package: libssl3 (debian 12.13) in gcr.io/distroless/nodejs24-debian12:nonroot
-# Fixed:   3.0.19-1~deb12u2 (available in Debian repos; NOT yet in distroless image)
+# CVE-2026-45447 (libssl3), CVE-2026-48712 (protobufjs), CVE-2026-48779 (ws)
 #
-# Assessment:
-#   The vulnerability is a NULL-pointer dereference in OpenSSL's CMS
-#   (Cryptographic Message Syntax) implementation, triggerable only when the
-#   CMS code path is invoked with a crafted message. Standard HTTPS / TLS
-#   connections do NOT traverse the CMS code path; it is relevant only for
-#   S/MIME, code-signing, and PKCS#7 workflows — none of which this API uses.
-#   Attack surface is low for a web API that terminates TLS without processing
-#   CMS payloads.
+# All three HIGH vulnerabilities from the 2026-07-10 Trivy scan are fixed
+# directly in code — no .trivyignore suppression required:
 #
-# Dockerfile fix included (belt-and-suspenders):
-#   Stages 2.5a / 2.5b in Dockerfile overlay the patched libssl3 .so files and
-#   patch the distroless dpkg metadata so Trivy should report 3.0.19 after the
-#   next build. This .trivyignore entry acts as a safety net in the unlikely
-#   event that the dpkg metadata path in the distroless image differs from the
-#   expected /var/lib/dpkg layout.
+#   CVE-2026-45447 — libssl3 Heap Use-After-Free in PKCS7_verify()
+#     Fixed by: Dockerfile security-patches stage installs 3.0.20-1~deb12u2
+#               and overlays patched .so files + dpkg metadata into production image.
+#     Remove Dockerfile stages 2.5a / 2.5b once the distroless digest is rotated
+#     to bundle libssl3 >= 3.0.20-1~deb12u2 natively.
 #
-# Review trigger:
-#   Remove this entry AND the Dockerfile stages 2.5a / 2.5b once
-#   update-base-images.yml rotates the distroless digest to a version that
-#   bundles libssl3 >= 3.0.19-1~deb12u2 natively.
-CVE-2026-28390
-
-# Remove the entry immediately when the fixed version has been deployed.
+#   CVE-2026-48712 — protobufjs DoS via uncontrolled recursion
+#     Fixed by: package.json overrides bump from 7.5.9 → 7.6.1.
+#
+#   CVE-2026-48779 — ws DoS via memory exhaustion from small WebSocket fragments
+#     Fixed by: package.json overrides "ws": ">=8.21.0" (pulled by @supabase/realtime-js).
 
 # ─── NOTE ────────────────────────────────────────────────────────────────────
 # CVE-2026-0861 (libc6 / glibc memalign integer overflow) was previously listed
