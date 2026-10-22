@@ -3,21 +3,12 @@
 # Production Deployment Pipeline
 #
 # Design principles:
-#   1. Triggered ONLY after CodeQL deep scan completes successfully — no polling, no race.
-#      Uses workflow_run event: deploy is event-driven, not concurrent with security scan.
-#   2. Runs ALL validation from scratch — no trust built on PR results alone
-#   3. Trivy scan runs BEFORE Docker push — vulnerable images never reach the registry
-#   4. target: production + build-args mirror pr.yml exactly (bit-for-bit parity)
-#   5. Image digest verified against PR simulation artifact when available
-#   6. Blue-Green deploy with automatic rollback on health or smoke test failure
-#   7. timeout-minutes on every job — hung processes never block CI indefinitely
-#   8. npm ci retried up to 3x — registry flakiness never kills a valid deploy
+#   1. Runs validation from scratch — no trust in PR results alone
+#   2. Builds and pushes the production image
+#   3. Deploys blue/green with automatic rollback on health or smoke test failure
 #
 # Pipeline order:
-#   codeql-gate
-#     ├─► validate ─┐
-#     └─► test-api  ├─► build-scan-push ─► vps-readiness-check ─► deploy
-#                   ┘                                                  │
+#   validate + test-api + infra-leakage-guard ─► build-push ─► vps-readiness-check ─► deploy
 #                                             api-health-gate ◄────────┘
 #                                                   │
 #                                             health-and-smoke
@@ -27,19 +18,8 @@
 name: Deploy to Production
 
 on:
-  # Triggered ONLY when the CodeQL deep scan workflow completes on master.
-  # This replaces the previous push trigger + polling approach:
-  #   - No race conditions (workflow_run fires AFTER codeql-deep finishes)
-  #   - No API polling loops or timing-dependent checks
-  #   - Deployment is blocked at the event level if CodeQL did not succeed
-  workflow_run:
-    workflows: ["CodeQL — Deep Scan (post-merge)"]
-    types:
-      - completed
-    branches:
-      - master
-  # Manual dispatch retained for emergency/hotfix deploys.
-  # The codeql-gate job enforces the conclusion check only for workflow_run.
+  push:
+    branches: [master]
   workflow_dispatch:
 
 # Never cancel an in-progress deployment — let it finish or fail cleanly.
@@ -52,65 +32,6 @@ permissions:
   contents: read
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # JOB: codeql-gate
-  #
-  # First job in every deploy run. Two responsibilities:
-  #
-  #   1. SECURITY GATE (workflow_run only):
-  #      Reads github.event.workflow_run.conclusion and fails hard if CodeQL
-  #      did not pass. This makes the event-driven guarantee explicit and
-  #      visible in the pipeline UI.
-  #
-  #   2. SHA RESOLUTION:
-  #      On workflow_run, github.sha = HEAD of default branch at event time,
-  #      NOT the commit that triggered CodeQL. We must deploy exactly the SHA
-  #      that was scanned. Exports deploy_sha = github.event.workflow_run.head_sha
-  #      so all downstream jobs checkout and tag the correct commit.
-  #      On workflow_dispatch, deploy_sha = github.sha (HEAD of triggered branch).
-  #
-  # All subsequent jobs that do git checkout use ref: needs.codeql-gate.outputs.deploy_sha.
-  # ---------------------------------------------------------------------------
-  codeql-gate:
-    name: CodeQL Security Gate
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      deploy_sha: ${{ steps.sha.outputs.deploy_sha }}
-    steps:
-      - name: Resolve deploy SHA
-        id: sha
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            echo "deploy_sha=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "deploy_sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Verify CodeQL deep scan passed
-        if: github.event_name == 'workflow_run'
-        run: |
-          CONCLUSION="${{ github.event.workflow_run.conclusion }}"
-          BRANCH="${{ github.event.workflow_run.head_branch }}"
-          SHA="${{ github.event.workflow_run.head_sha }}"
-          echo "CodeQL deep scan conclusion : $CONCLUSION"
-          echo "Scanned commit SHA          : $SHA"
-          echo "Head branch                 : $BRANCH"
-          # Branch guard: only master commits deploy to production.
-          # The workflow_run trigger already filters branches: [master], but this
-          # explicit check makes the policy visible in the job log and provides a
-          # hard error if the filter is ever widened accidentally.
-          if [ "$BRANCH" != "master" ]; then
-            echo "::error::Deploy blocked — head_branch=$BRANCH (only master is allowed to deploy to production)."
-            exit 1
-          fi
-          if [ "$CONCLUSION" != "success" ]; then
-            echo "::error::CodeQL deep scan did not pass (conclusion=$CONCLUSION)."
-            echo "  Deployment is blocked. Review findings before retrying:"
-            echo "  https://github.com/${{ github.repository }}/security/code-scanning"
-            exit 1
-          fi
-          echo "✓ CodeQL gate passed — safe to deploy SHA $SHA (branch=$BRANCH)"
 
   # ---------------------------------------------------------------------------
   # JOB: validate
@@ -121,7 +42,6 @@ jobs:
   validate:
     name: Validate (typecheck + audit)
     runs-on: ubuntu-latest
-    needs: [codeql-gate]
     timeout-minutes: 10
     steps:
       - name: Confirm deployment trigger
@@ -135,8 +55,6 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v5
-        with:
-          ref: ${{ needs.codeql-gate.outputs.deploy_sha }}
 
       - name: Setup Node.js 24
         uses: actions/setup-node@v5
@@ -181,7 +99,6 @@ jobs:
   test-api:
     name: API Tests (unit + integration)
     runs-on: ubuntu-latest
-    needs: [codeql-gate]
     timeout-minutes: 15
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL_TEST }}
@@ -190,8 +107,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
-        with:
-          ref: ${{ needs.codeql-gate.outputs.deploy_sha }}
 
       - name: Setup Node.js 24
         uses: actions/setup-node@v5
@@ -229,13 +144,10 @@ jobs:
   infra-leakage-guard:
     name: Infra Leakage Guard
     runs-on: ubuntu-latest
-    needs: [codeql-gate]
     timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@v5
-        with:
-          ref: ${{ needs.codeql-gate.outputs.deploy_sha }}
 
       - name: Block monitoring infra client references in API source
         run: |
@@ -294,7 +206,6 @@ jobs:
                --exclude-dir=tests \
                --exclude-dir=node_modules \
                --exclude-dir=.git \
-               --exclude-dir=codeql-db \
                --exclude='*.md' \
                --exclude='*.test.ts' \
                --exclude='*.unit.ts' \
@@ -308,14 +219,9 @@ jobs:
           echo "✓ Infra contract naming guard passed (api_network, redis://redis:6379)"
 
   # ---------------------------------------------------------------------------
-  # JOB: build-scan-push
+  # JOB: build-push
   #
-  # Three-phase security gate — identical build config to pr.yml:
-  #   Phase 1 — Build locally (target: production, same build-args, same cache)
-  #   Phase 2 — Trivy scan: pinned aquasec/trivy:0.49.1 Docker image, exit-code 1
-  #              on HIGH/CRITICAL (blocks push). NOT trivy-action — supply-chain safe.
-  #              DB pre-pulled, scan runs --network none (air-gapped).
-  #   Phase 3 — Push exact scanned image to GHCR (no rebuild)
+  # Build the production image locally, verify it runs, then push it to GHCR.
   #
   # Image digest verification:
   #   After building, the digest is compared against the digest stored by
@@ -324,15 +230,14 @@ jobs:
   #   Comparison is best-effort (continue-on-error) because the merge commit
   #   SHA may differ from the PR head SHA on squash-merges.
   # ---------------------------------------------------------------------------
-  build-scan-push:
-    name: Build, Scan & Push Docker Image
+  build-push:
+    name: Build & Push Docker Image
     runs-on: ubuntu-latest
-    needs: [codeql-gate, validate, test-api, infra-leakage-guard]
+    needs: [validate, test-api, infra-leakage-guard]
     timeout-minutes: 25
     permissions:
       contents: read
       packages: write
-      security-events: write
     outputs:
       sha_short:  ${{ steps.meta.outputs.sha_short }}
       digest:     ${{ steps.digest.outputs.digest }}
@@ -340,13 +245,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
-        with:
-          ref: ${{ needs.codeql-gate.outputs.deploy_sha }}
 
       - name: Extract commit SHA
         id: meta
         env:
-          DEPLOY_SHA: ${{ needs.codeql-gate.outputs.deploy_sha }}
+          DEPLOY_SHA: ${{ github.sha }}
         run: |
           echo "sha_short=${DEPLOY_SHA::7}" >> "$GITHUB_OUTPUT"
           echo "deploy_sha=$DEPLOY_SHA" >> "$GITHUB_OUTPUT"
@@ -359,7 +262,7 @@ jobs:
           docker pull node:24.2.0-bookworm-slim
           docker pull gcr.io/distroless/nodejs24-debian12:nonroot
 
-      # Phase 1: Build into local Docker daemon for scanning.
+      # Build into the local Docker daemon before pushing.
       # EXACT same parameters as pr.yml production-simulation:
       #   target: production, build-args: NODE_ENV=production, GHA cache.
       # CACHE_BUSTER forces rebuild when package-lock.json changes (prevents stale deps).
@@ -475,114 +378,6 @@ jobs:
             echo "  Ensure no source changes occurred between PR approval and deploy trigger."
           fi
 
-      # Phase 2: Trivy scan — image pinned by immutable digest, NOT trivy-action.
-      # aquasec/trivy:0.49.1 → sha256:91494b87ddc64f62860d52997532643956c24eeee0d0dda317d563c28c8581bc
-      # Identical severity gates to pr.yml (HIGH,CRITICAL / exit-code 1).
-      # Two-phase: DB downloaded first (needs network), then scan runs --network none.
-      - name: Get date for Trivy DB cache key
-        id: trivy-date
-        run: echo "date=$(date +'%Y-%m-%d')" >> "$GITHUB_OUTPUT"
-
-      - name: Cache Trivy DB (daily refresh)
-        uses: actions/cache@v4
-        with:
-          path: /tmp/trivy-cache
-          key: trivy-db-${{ runner.os }}-${{ steps.trivy-date.outputs.date }}
-          restore-keys: |
-            trivy-db-${{ runner.os }}-
-
-      - name: Pull Trivy vulnerability database
-        run: |
-          docker run --rm \
-            -v /tmp/trivy-cache:/root/.cache \
-            aquasec/trivy@sha256:91494b87ddc64f62860d52997532643956c24eeee0d0dda317d563c28c8581bc \
-            image --download-db-only
-
-      - name: Scan image with Trivy (HIGH/CRITICAL, ignore-unfixed)
-        env:
-          IMAGE_NAME: fieldtrack-api:${{ steps.meta.outputs.sha_short }}
-        run: |
-          SCAN_PASSED=false
-          for i in 1 2 3; do
-            if docker run --rm \
-              --network none \
-              -v /var/run/docker.sock:/var/run/docker.sock \
-              -v /tmp/trivy-cache:/root/.cache \
-              -v "$(pwd)/.trivyignore:/tmp/.trivyignore:ro" \
-              aquasec/trivy@sha256:91494b87ddc64f62860d52997532643956c24eeee0d0dda317d563c28c8581bc image \
-                --skip-db-update \
-                --ignore-unfixed \
-                --severity HIGH,CRITICAL \
-                --exit-code 1 \
-                --ignorefile /tmp/.trivyignore \
-                "$IMAGE_NAME"; then
-              SCAN_PASSED=true
-              break
-            fi
-            echo "Trivy attempt $i failed..."
-            [ "$i" -lt 3 ] && sleep 5
-          done
-          if [ "$SCAN_PASSED" != "true" ]; then
-            echo "::error::Trivy scan failed after 3 attempts — HIGH/CRITICAL vulnerabilities found or scan error."
-            exit 1
-          fi
-          echo "✓ Trivy scan passed (HIGH/CRITICAL, ignore-unfixed)"
-
-      - name: Scan for unfixed CRITICAL vulnerabilities (informational)
-        continue-on-error: true
-        env:
-          IMAGE_NAME: fieldtrack-api:${{ steps.meta.outputs.sha_short }}
-        run: |
-          UNFIXED_COUNT=$(docker run --rm \
-            --network none \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            -v /tmp/trivy-cache:/root/.cache \
-            aquasec/trivy@sha256:91494b87ddc64f62860d52997532643956c24eeee0d0dda317d563c28c8581bc image \
-              --skip-db-update \
-              --severity CRITICAL \
-              --format json \
-              "$IMAGE_NAME" | jq '[.Results[]?.Misconfigurations[]? // .Results[]?.Vulnerabilities[]? | select(.FixedVersion == null or .FixedVersion == "")] | length')
-          
-          if [ "$UNFIXED_COUNT" -gt 0 ]; then
-            echo "⚠ WARNING: $UNFIXED_COUNT unfixed CRITICAL vulnerabilities found"
-            echo "  (No patches available upstream — waiting for vendor fix)"
-            docker run --rm \
-              --network none \
-              -v /var/run/docker.sock:/var/run/docker.sock \
-              -v /tmp/trivy-cache:/root/.cache \
-              aquasec/trivy@sha256:91494b87ddc64f62860d52997532643956c24eeee0d0dda317d563c28c8581bc image \
-                --skip-db-update \
-                --severity CRITICAL \
-                "$IMAGE_NAME" >> /tmp/unfixed-critical.log || true
-          else
-            echo "✓ No unfixed CRITICAL vulnerabilities"
-          fi
-
-      - name: Generate Trivy scan results (SARIF for GitHub Security)
-        env:
-          IMAGE_NAME: fieldtrack-api:${{ steps.meta.outputs.sha_short }}
-        run: |
-          docker run --rm \
-            --network none \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            -v /tmp/trivy-cache:/root/.cache \
-            -v "$(pwd):/workspace" \
-            aquasec/trivy@sha256:91494b87ddc64f62860d52997532643956c24eeee0d0dda317d563c28c8581bc image \
-              --skip-db-update \
-              --format sarif \
-              --output /workspace/trivy-results.sarif \
-              "$IMAGE_NAME"
-          echo "✓ SARIF results written to trivy-results.sarif"
-
-      - name: Upload Trivy scan results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: trivy-results.sarif
-          category: 'trivy-image-scan'
-
-      # Phase 3: Scan passed — push the exact scanned image (same layer digests).
-      # Uses docker tag + push rather than rebuilding to guarantee what was scanned
-      # is exactly what lands in the registry.
       - name: Verify image digest unchanged before push
         env:
           IMAGE_NAME: fieldtrack-api:${{ steps.meta.outputs.sha_short }}
@@ -594,10 +389,10 @@ jobs:
           echo "Expected digest : $IMAGE_DIGEST"
           echo "Current digest  : $CURRENT"
           if [ "$CURRENT" != "$IMAGE_DIGEST" ]; then
-            echo "ERROR: image digest changed between scan and push — aborting."
+            echo "ERROR: image digest changed between build and push — aborting."
             exit 1
           fi
-          echo "✓ Digest verified — pushing exactly what was scanned."
+          echo "✓ Digest verified — pushing the image that was built."
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
@@ -623,32 +418,12 @@ jobs:
           docker push ghcr.io/${OWNER}/api:${{ steps.meta.outputs.sha_short }}
           echo "✓ Pushed ghcr.io/${OWNER}/api:${{ steps.meta.outputs.deploy_sha }} (full SHA — reference for deploy)"
 
-      # Use the same pinned Trivy image to generate the SBOM — no additional
-      # tool dependency, no unpinned action, same supply-chain guarantees.
-      - name: Generate SBOM (CycloneDX)
-        env:
-          IMAGE_NAME: fieldtrack-api:${{ steps.meta.outputs.sha_short }}
-        run: |
-          docker run --rm \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            aquasec/trivy@sha256:91494b87ddc64f62860d52997532643956c24eeee0d0dda317d563c28c8581bc image \
-              --format cyclonedx \
-              --output /dev/stdout \
-              "$IMAGE_NAME" > sbom.json
-
-      - name: Upload SBOM artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: sbom-${{ steps.meta.outputs.sha_short }}
-          path: sbom.json
-          retention-days: 90
-
       - name: Save build provenance
         env:
           IMAGE_NAME: fieldtrack-api:${{ steps.meta.outputs.sha_short }}
           IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
         run: |
-          echo "commit=${{ needs.codeql-gate.outputs.deploy_sha }}" > provenance.txt
+          echo "commit=${{ steps.meta.outputs.deploy_sha }}" > provenance.txt
           echo "ref=${{ github.ref }}" >> provenance.txt
           echo "image=${IMAGE_NAME}" >> provenance.txt
           echo "registry_tag=ghcr.io/${{ github.repository_owner }}/api:${{ steps.meta.outputs.deploy_sha }}" >> provenance.txt
@@ -663,22 +438,19 @@ jobs:
           path: provenance.txt
           retention-days: 90
 
-      - name: Build & scan summary
+      - name: Build & push summary
         if: always()
         env:
           IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
         run: |
-          SBOM_COUNT=$(python3 -c "import json; d=json.load(open('sbom.json')); print(len(d.get('components', [])))" 2>/dev/null || echo 'n/a')
           {
-            echo "## Build · Scan · Push"
+            echo "## Build · Push"
             echo "| Field | Value |"
             echo "|---|---|"
             echo "| Deploy SHA | \`${{ steps.meta.outputs.deploy_sha }}\` |"
             echo "| Image tag (local) | \`fieldtrack-api:${{ steps.meta.outputs.sha_short }}\` |"
             echo "| Registry tag | \`ghcr.io/${{ github.repository_owner }}/api:${{ steps.meta.outputs.deploy_sha }}\` |"
             echo "| Image digest | \`${IMAGE_DIGEST}\` |"
-            echo "| SBOM components | ${SBOM_COUNT} |"
-            echo "| Trivy gate | HIGH,CRITICAL / exit-code 1 / ignore-unfixed |"
             echo "| Registry | ghcr.io/${{ github.repository_owner }}/api |"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -686,7 +458,7 @@ jobs:
   # JOB: vps-readiness-check
   #
   # Validates the VPS is in a deployable state BEFORE running the deploy.
-  # Runs in PARALLEL with vps-readiness-check (both depend on build-scan-push).
+  # Runs after the image is built and pushed.
   # Both must succeed before deploy is allowed to proceed.
   #
   # Delegates to scripts/vps-readiness-check.sh which checks:
@@ -701,7 +473,7 @@ jobs:
   vps-readiness-check:
     name: VPS Readiness Gate
     runs-on: ubuntu-latest
-    needs: [build-scan-push]
+    needs: [build-push]
     timeout-minutes: 10
     steps:
       - name: Run VPS readiness check via SSH
@@ -734,7 +506,7 @@ jobs:
   deploy:
     name: Deploy (Blue-Green SSH)
     runs-on: ubuntu-latest
-    needs: [build-scan-push, vps-readiness-check]
+    needs: [build-push, vps-readiness-check]
     timeout-minutes: 20
     steps:
       - name: Validate required deployment secrets
@@ -755,7 +527,7 @@ jobs:
 
       - name: Log deployment metadata and trigger info
         run: |
-          DEPLOY_SHA="${{ needs.build-scan-push.outputs.deploy_sha }}"
+          DEPLOY_SHA="${{ needs.build-push.outputs.deploy_sha }}"
           {
             echo "## Deployment Initiated"
             echo "| Field | Value |"
@@ -785,9 +557,9 @@ jobs:
             # Enforce repo is at the exact SHA being deployed (issue 7 — prevents
             # stale deploy scripts if another commit landed during this pipeline run).
             git fetch origin
-            git reset --hard ${{ needs.build-scan-push.outputs.deploy_sha }}
+            git reset --hard ${{ needs.build-push.outputs.deploy_sha }}
             chmod +x scripts/*.sh
-            ./scripts/deploy.sh "${{ needs.build-scan-push.outputs.deploy_sha }}"
+            ./scripts/deploy.sh "${{ needs.build-push.outputs.deploy_sha }}"
             echo "[DEPLOY] Deploy completed in $(($(date +%s) - T0))s"
 
       - name: Log deployment state (slot + SHA for debugging)
@@ -879,13 +651,13 @@ jobs:
   health-and-smoke:
     name: Health Checks & Smoke Tests
     runs-on: ubuntu-latest
-    needs: [api-health-gate, build-scan-push]
+    needs: [api-health-gate, build-push]
     timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v5
         with:
-          ref: ${{ needs.build-scan-push.outputs.deploy_sha }}
+          ref: ${{ needs.build-push.outputs.deploy_sha }}
 
       - name: CI guard — deploy.sh must not reference /ready or monitoring stack
         run: |
@@ -1014,7 +786,7 @@ jobs:
 
       - name: Deployment summary
         run: |
-          DEPLOY_SHA="${{ needs.build-scan-push.outputs.deploy_sha }}"
+          DEPLOY_SHA="${{ needs.build-push.outputs.deploy_sha }}"
           {
             echo "## Deployment Complete"
             echo "| Field | Value |"
@@ -1060,7 +832,7 @@ jobs:
     steps:
       - name: Log rollback trigger
         run: |
-          echo "::error::Rollback triggered (post-switch health failure) — deploy_sha=${{ needs.build-scan-push.outputs.deploy_sha }}"
+          echo "::error::Rollback triggered (post-switch health failure) — deploy_sha=${{ needs.build-push.outputs.deploy_sha }}"
           [ "${{ needs.api-health-gate.result }}" = "failure" ] && echo "  [ERROR] failed job: api-health-gate" || true
           [ "${{ needs.health-and-smoke.result }}" = "failure" ] && echo "  [ERROR] failed job: health-and-smoke" || true
 

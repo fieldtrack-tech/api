@@ -124,13 +124,12 @@ Production deploy is driven by GitHub Actions and `scripts/deploy.sh`.
 
 High-level flow:
 
-1. CodeQL deep scan gate
-2. validate + tests
-3. docker build, vulnerability scan, push to GHCR
-4. VPS readiness check
-5. blue-green deploy
-6. health and smoke checks
-7. rollback on failure
+1. validate + tests
+2. docker build and push to GHCR
+3. VPS readiness check
+4. blue-green deploy
+5. health and smoke checks
+6. rollback on failure
 
 Liveness gate is `/health` (not `/ready`).
 

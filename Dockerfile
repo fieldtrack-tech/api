@@ -6,7 +6,7 @@
 #   3. production   — gcr.io/distroless/nodejs24-debian12:nonroot
 #
 # Security model:
-#   • Stages 1–2 are ephemeral; Trivy only scans the final (production) image.
+#   • Stages 1–2 are ephemeral; only the final (production) image is deployed.
 #   • Distroless contains only the Node.js 24 runtime binary + minimal glibc/libssl.
 #     No shell, no package manager, no tar, no apt, no curl — the entire OS toolchain
 #     CVE surface present in bookworm-slim is eliminated.
@@ -62,12 +62,11 @@ FROM gcr.io/distroless/nodejs24-debian12:nonroot@sha256:6c75c6e4771c2ea5f02aaf99
 # The pinned distroless digest (sha256:6c75c6e...) was published before that fix
 # landed in the upstream image. This stage:
 #   (a) installs the patched libssl3 / libcrypto shared libraries, and
-#   (b) patches the version string in the distroless dpkg metadata so Trivy
-#       reports the corrected version and stops blocking the scan.
+#   (b) updates the version string in the distroless dpkg metadata to match the
+#       patched libraries.
 # Handles both /var/lib/dpkg/status and /var/lib/dpkg/status.d/* layouts.
 #
-# Remove this stage (and the matching .trivyignore entry) once
-# update-base-images.yml rotates the distroless digest to a version that
+# Remove this stage once the distroless base image is upgraded to a version that
 # bundles libssl3 >= 3.0.20-1~deb12u2.
 FROM node:24.2.0-bookworm-slim@sha256:1a6a7b2e2e2c80a6973f57aa8b0c6ad67a961ddbc5ef326c448e133f93564ff9 AS security-patches
 
@@ -94,7 +93,6 @@ RUN find /tmp/distroless-dpkg -type f -exec \
 #   • Node.js 24 runtime binary (at /nodejs/bin/node)
 #   • Minimal glibc + libssl from Debian 12
 #   • No shell, no package manager, no OS utilities
-# Trivy finds near-zero OS CVEs in this image.
 # Digest pinned to linux/amd64 manifest (resolved 2026-03-28).
 # To rotate: docker manifest inspect gcr.io/distroless/nodejs24-debian12:nonroot
 #   and replace the sha256 below with the current amd64 digest.
@@ -119,7 +117,7 @@ COPY healthcheck.js ./healthcheck.js
 
 # Overlay patched libssl3 (CVE-2026-45447 — fixed in 3.0.20-1~deb12u2).
 # Replaces the vulnerable shared libraries bundled in the distroless base and
-# overlays the patched dpkg metadata so Trivy reports the corrected version.
+# overlays matching patched dpkg metadata.
 # Remove these three COPY lines (and stages 2.5a / 2.5b) once the distroless
 # digest is rotated to include libssl3 >= 3.0.20-1~deb12u2.
 COPY --from=security-patches /usr/lib/x86_64-linux-gnu/libssl.so.3    /usr/lib/x86_64-linux-gnu/libssl.so.3

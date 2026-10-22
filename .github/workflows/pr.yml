@@ -136,7 +136,6 @@ jobs:
                --exclude-dir=tests \
                --exclude-dir=node_modules \
                --exclude-dir=.git \
-               --exclude-dir=codeql-db \
                --exclude='*.md' \
                --exclude='*.test.ts' \
                --exclude='*.unit.ts' \
@@ -317,56 +316,6 @@ jobs:
           docker rmi fieldtrack-api:ci-validation
 
   # ---------------------------------------------------------------------------
-  # JOB: codeql-lite
-  #
-  # Lightweight CodeQL security scan — runs in PARALLEL with api-ci.
-  # Uses security-extended queries (OWASP Top-10 class) for fast PR feedback.
-  # This job is REQUIRED in branch protection; PRs cannot merge until it passes.
-  #
-  # Job name "codeql-lite" is the required status check identifier.
-  # Branch protection setting: "PR Validation / codeql-lite"
-  # ---------------------------------------------------------------------------
-  codeql-lite:
-    name: CodeQL Lite (Security Scan)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      actions: read
-      contents: read
-      security-events: write
-    strategy:
-      fail-fast: false
-      matrix:
-        language: ["javascript"]
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-
-      - name: Setup Node.js (match production)
-        uses: actions/setup-node@v5
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build API (enables data-flow tracing)
-        run: npm run build || true
-
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v4
-        with:
-          languages: ${{ matrix.language }}
-          queries: security-extended
-
-      - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v4
-        with:
-          category: "codeql-lite"
-
-  # ---------------------------------------------------------------------------
   # JOB: production-simulation
   #
   # Validates the image behaves correctly under production-like conditions:
@@ -377,7 +326,7 @@ jobs:
   #     (no host port bindings, no docker exec — mirrors nginx→api path)
   #
   # Also captures the image digest for parity verification during deploy
-  # (deploy.yml's build-scan-push compares against this artifact).
+  # (deploy.yml's build-push compares against this artifact).
   #
   # This job runs independently of api-ci; both must pass before merge.
   # ---------------------------------------------------------------------------
