@@ -58,7 +58,7 @@ type(scope): short imperative description
 feat(expenses): add bulk-approve endpoint for admins
 fix(auth): handle missing organization_id claim in JWT
 refactor(analytics): replace read-then-upsert with atomic RPC calls
-ci(deploy): add SARIF-based Trivy gate before image push
+ci(deploy): add image build validation before push
 infra(nginx): block /docs and /openapi.json in production
 docs(deployment): document blue-green rollback procedure
 test(attendance): cover double-checkout edge case

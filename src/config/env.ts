@@ -62,6 +62,19 @@ const optionalBaseUrl = z.preprocess(
 );
 
 /**
+ * Optional non-empty environment value.
+ *
+ * Environment files commonly express an unset optional secret as `NAME=`.
+ * Treat blank or whitespace-only values as absent so optional validation and
+ * environment-specific requirements can handle them consistently.
+ */
+const optionalNonEmptyString = z.preprocess(
+  (val) =>
+    typeof val === "string" && val.trim().length > 0 ? val.trim() : undefined,
+  z.string().min(1).optional(),
+);
+
+/**
  * Zod schema for FRONTEND_BASE_URL — the canonical URL of the web frontend
  * (fieldtrack-tech/web).
  *
@@ -279,7 +292,7 @@ const envSchema = z
      * When unset (development/test), /metrics is open for convenience.
      * MUST be set in production — startup fails if it is missing there.
      */
-    METRICS_SCRAPE_TOKEN: z.string().min(1).optional(),
+    METRICS_SCRAPE_TOKEN: optionalNonEmptyString,
 
     // ── Observability ─────────────────────────────────────────────────────────
 

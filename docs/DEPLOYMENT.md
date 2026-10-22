@@ -8,17 +8,13 @@ Primary workflow: `.github/workflows/deploy.yml`
 
 Pipeline behavior:
 
-1. `codeql-gate`
-   - deploy triggers from CodeQL deep-scan completion on `master`
-   - blocked if scan conclusion is not `success`
-2. `validate` + `test-api` + `infra-leakage-guard`
-3. `build-scan-push`
+1. `validate` + `test-api` + `infra-leakage-guard`
+2. `build-push`
    - Docker build
-   - image scanning
    - push to GHCR
-4. readiness/deploy jobs execute VPS deployment using `scripts/deploy.sh`
-5. post-deploy health and smoke checks
-6. rollback path on deploy/smoke failure
+3. readiness/deploy jobs execute VPS deployment using `scripts/deploy.sh`
+4. post-deploy health and smoke checks
+5. rollback path on deploy/smoke failure
 
 ## Docker Build and Runtime
 
