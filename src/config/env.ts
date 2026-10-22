@@ -1,10 +1,9 @@
 // ⚠️  DO NOT add env variables without updating ALL of the following:
 //   - .env.example                      (developer template — every variable must appear here)
-//   - .github/workflows/pr.yml          (CI env: block — non-secret defaults for container bootstrap)
 //   - docs/env-contract.md              (source-of-truth documentation table)
 //   - scripts/deploy.sh                 (deploy-time environment validation)
 //
-// Failure to keep these in sync causes config drift, silent CI failures, and
+// Failure to keep these in sync causes config drift and
 // environment contract violations caught only at production deploy time.
 
 /**
@@ -62,6 +61,19 @@ const optionalBaseUrl = z.preprocess(
 );
 
 /**
+ * Optional non-empty environment value.
+ *
+ * Environment files commonly express an unset optional secret as `NAME=`.
+ * Treat blank or whitespace-only values as absent so optional validation and
+ * environment-specific requirements can handle them consistently.
+ */
+const optionalNonEmptyString = z.preprocess(
+  (val) =>
+    typeof val === "string" && val.trim().length > 0 ? val.trim() : undefined,
+  z.string().min(1).optional(),
+);
+
+/**
  * Zod schema for FRONTEND_BASE_URL — the canonical URL of the web frontend
  * (fieldtrack-tech/web).
  *
@@ -112,7 +124,7 @@ const envSchema = z
      *
      * Set to the literal string "1" in every .env / secrets manager entry.
      * When this project increments the schema (breaking change), bump the
-     * expected literal here and in CI/CD.  Deployments carrying a stale
+     * expected literal here and in deployment configuration. Deployments carrying a stale
      * CONFIG_VERSION will fail fast rather than misbehave silently.
      *
      * Value: must be the exact string "1" — any other value fails validation.
@@ -279,7 +291,7 @@ const envSchema = z
      * When unset (development/test), /metrics is open for convenience.
      * MUST be set in production — startup fails if it is missing there.
      */
-    METRICS_SCRAPE_TOKEN: z.string().min(1).optional(),
+    METRICS_SCRAPE_TOKEN: optionalNonEmptyString,
 
     // ── Observability ─────────────────────────────────────────────────────────
 
@@ -315,9 +327,9 @@ const envSchema = z
     SERVICE_NAME: z.string().default("fieldtrack-api"),
 
     /**
-     * Git commit SHA injected by GitHub Actions.
+     * Git commit SHA supplied by the deployment environment.
      * Logged on server boot to correlate a running container to a git commit.
-     * Optional — falls back to "manual" when not running in CI.
+     * Optional — falls back to "manual" when not supplied.
      */
     GITHUB_SHA: z.string().optional(),
 
@@ -773,7 +785,7 @@ interface MinimalLogger {
  *   - API_BASE_URL     — API surface URL
  *   - FRONTEND_BASE_URL — frontend URL used in generated links
  *   - SERVICE_NAME     — otel service label
- *   - GITHUB_SHA       — deployed commit (CI deployments only)
+ *   - GITHUB_SHA       — deployed commit (when supplied by the deployment environment)
  *   - CORS_ORIGIN      — active CORS policy summary
  *   - TEMPO_ENDPOINT   — tracing export destination
  *

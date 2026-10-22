@@ -27,7 +27,7 @@ cp .env.example .env
 | Tests | `test/<description>` | `test/analytics-edge-cases` |
 | Chores / deps | `chore/<description>` | `chore/bump-fastify-5` |
 
-All PRs target `master`. `master` is protected — CI must pass before merge.
+All PRs target `master`.
 
 ---
 
@@ -44,7 +44,7 @@ type(scope): short imperative description
 | `feat` | New user-facing functionality |
 | `fix` | Bug fix |
 | `refactor` | Internal code change — no behaviour change |
-| `ci` | CI/CD workflow changes |
+| `ci` | Continuous-integration configuration changes |
 | `infra` | Infrastructure, Docker, nginx, monitoring |
 | `docs` | Documentation only |
 | `test` | Adding or updating tests |
@@ -58,7 +58,7 @@ type(scope): short imperative description
 feat(expenses): add bulk-approve endpoint for admins
 fix(auth): handle missing organization_id claim in JWT
 refactor(analytics): replace read-then-upsert with atomic RPC calls
-ci(deploy): add SARIF-based Trivy gate before image push
+ci(deploy): add image build validation before push
 infra(nginx): block /docs and /openapi.json in production
 docs(deployment): document blue-green rollback procedure
 test(attendance): cover double-checkout edge case

@@ -194,6 +194,24 @@ describe("env schema — URL normalisation", () => {
   });
 });
 
+describe("optional environment values", () => {
+  const optionalNonEmptyString = z.preprocess(
+    (val) =>
+      typeof val === "string" && val.trim().length > 0 ? val.trim() : undefined,
+    z.string().min(1).optional(),
+  );
+
+  it("treats blank optional secrets as unset", () => {
+    expect(optionalNonEmptyString.parse("")).toBeUndefined();
+    expect(optionalNonEmptyString.parse("   ")).toBeUndefined();
+    expect(optionalNonEmptyString.parse(undefined)).toBeUndefined();
+  });
+
+  it("preserves a configured optional secret", () => {
+    expect(optionalNonEmptyString.parse(" metrics-token ")).toBe("metrics-token");
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 3. PORT bounds: 1000–65535
 // ─────────────────────────────────────────────────────────────────────────────

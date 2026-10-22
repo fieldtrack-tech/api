@@ -120,21 +120,18 @@ Full endpoint contract and examples: `docs/API_REFERENCE.md`.
 
 ## Deployment Summary
 
-Production deploy is driven by GitHub Actions and `scripts/deploy.sh`.
+Production deployment is run manually with `scripts/deploy.sh`.
 
 High-level flow:
 
-1. CodeQL deep scan gate
-2. validate + tests
-3. docker build, vulnerability scan, push to GHCR
-4. VPS readiness check
-5. blue-green deploy
-6. health and smoke checks
-7. rollback on failure
+1. build and publish the target image
+2. run `scripts/deploy.sh <sha>` on the VPS
+3. verify health and smoke checks
+4. roll back with `scripts/deploy.sh --rollback --auto` if needed
 
 Liveness gate is `/health` (not `/ready`).
 
-See `docs/DEPLOYMENT.md` for detailed CI/CD and rollback behavior.
+See `docs/DEPLOYMENT.md` for manual deployment and rollback behavior.
 
 ## Documentation
 
