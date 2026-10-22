@@ -50,16 +50,11 @@ All significant changes to FieldTrack 2.0 are documented here by development pha
 
 ---
 
-## [Post-Phase-18] — CI/CD Upgrade & Multi-Version Rollback — 2026
+## [Post-Phase-18] — Deployment & Multi-Version Rollback — 2026
 
-### CI/CD Pipeline (commits `b61cc19`, `29cb948`)
-- Split GitHub Actions `deploy.yml` into two jobs: `test` (runs on all events) and `build-and-deploy` (push to master only, `needs: test`)
-- Replaced `npm install` with `npm ci` for deterministic dependency installs
-- Added `npx tsc --noEmit` type-check step before tests in CI
-- Added `actions/setup-node` cache keyed on `package-lock.json` to avoid redundant installs
-- Upgraded Docker build to `docker/build-push-action` with GitHub Actions layer cache (`type=gha`)
-- PRs to `master` now run the `test` job — failing tests block merge
-- Every image is tagged with both `latest` and a 7-character SHA
+### Deployment
+- Image builds and deployments are run manually.
+- Published images may be tagged with both `latest` and a 7-character SHA.
 
 ### Rollback System (commits `35db851`, `23e7720`)
 - Added rollback mode to `scripts/deploy.sh` — reads `.deploy_history`, validates ≥ 2 deployments, displays history table with current/target markers, prompts for confirmation, and redeploys the previous image
@@ -158,9 +153,8 @@ All significant changes to FieldTrack 2.0 are documented here by development pha
 
 ---
 
-## [Phase 11] — CI/CD Deployment Hardening — 2025
+## [Phase 11] — Deployment Hardening — 2025
 
-- Added initial GitHub Actions workflow for automated deployment
 - Added blue-green zero-downtime deployment script (later unified into `scripts/deploy.sh`)
 - Health-check validation before traffic switch
 - Old container removed only after successful switchover

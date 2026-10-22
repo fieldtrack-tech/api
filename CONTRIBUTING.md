@@ -27,7 +27,7 @@ cp .env.example .env
 | Tests | `test/<description>` | `test/analytics-edge-cases` |
 | Chores / deps | `chore/<description>` | `chore/bump-fastify-5` |
 
-All PRs target `master`. `master` is protected — CI must pass before merge.
+All PRs target `master`.
 
 ---
 
@@ -44,7 +44,7 @@ type(scope): short imperative description
 | `feat` | New user-facing functionality |
 | `fix` | Bug fix |
 | `refactor` | Internal code change — no behaviour change |
-| `ci` | CI/CD workflow changes |
+| `ci` | Continuous-integration configuration changes |
 | `infra` | Infrastructure, Docker, nginx, monitoring |
 | `docs` | Documentation only |
 | `test` | Adding or updating tests |

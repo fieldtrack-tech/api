@@ -4,7 +4,7 @@
 # ============================================================================
 #
 # Validates VPS state before a blue-green deployment is allowed to proceed.
-# Invoked by the vps-readiness-check job in deploy.yml via SSH.
+# Run on the VPS before or after a manual deployment.
 #
 # SAFE AUTO-FIXES (non-destructive):
 #   - Creates api_network if missing
@@ -20,7 +20,7 @@
 #   - DEPLOY_ROOT does not exist
 #
 # USAGE:
-#   Called automatically by deploy.yml.
+#   Run directly from the VPS when needed.
 #   Can be run manually: bash scripts/vps-readiness-check.sh
 #
 # EXIT CODES:

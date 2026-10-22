@@ -6,9 +6,8 @@
  * APP_ENV=test skips production-only safety checks (METRICS_SCRAPE_TOKEN,
  * CORS_ORIGIN, etc.) in the Zod superRefine guards in env.ts.
  *
- * Non-empty values injected by GitHub Actions are preserved when running in
- * CI, while blank placeholders in a local `.env` are replaced with safe test
- * defaults.
+ * Non-empty injected values are preserved, while blank placeholders in a
+ * local `.env` are replaced with safe test defaults.
  */
 const setTestDefault = (name: string, value: string): void => {
   if (!process.env[name]?.trim()) process.env[name] = value;
