@@ -11,9 +11,13 @@
 #   are pinned by digest. The weekly update-base-images.yml workflow rotates digests
 #   automatically, pulling in security patches as soon as Google publishes them.
 #
-# npm dependency status (last verified: 2026-03-28):
+# npm dependency status (last verified: 2026-07-10):
 #   npm audit --omit=dev reports 0 vulnerabilities.
-#   Resolved in this pass (all were MODERATE, none HIGH/CRITICAL):
+#   Resolved in this pass:
+#     - protobufjs@7.5.9 (CVE-2026-48712 HIGH) → patched via overrides bump to 7.6.1
+#     - ws@8.20.1 (CVE-2026-48779 HIGH) → patched via overrides to >=8.21.0
+#     - libssl3 (CVE-2026-45447 HIGH) → patched via Dockerfile security-patches stage (3.0.20-1~deb12u2)
+#   Previously resolved (MODERATE, no entry needed):
 #     - fastify@<=5.8.2 (GHSA-444r-cwp2-x5xf) → patched by upgrade to 5.8.3+
 #     - brace-expansion@4.0.0-5.0.4 (GHSA-f886-m6hf-6m8v) → patched via lockfile
 #     - yaml@2.0.0-2.8.2 (GHSA-48c2-rrv3-qjmp) → patched via lockfile
@@ -30,34 +34,49 @@
 # Every entry MUST include: CVE ID, date added, package, reason, and review trigger.
 
 # ---------------------------------------------------------------------------
-# CVE-2026-28390
-# Added:   2026-04-10
+# libssl3 CVEs — all fixed by Dockerfile security-patches stage (3.0.20-1~deb12u2)
+# Added:   2026-07-10
 # Package: libssl3 (debian 12.13) in gcr.io/distroless/nodejs24-debian12:nonroot
-# Fixed:   3.0.19-1~deb12u2 (available in Debian repos; NOT yet in distroless image)
 #
-# Assessment:
-#   The vulnerability is a NULL-pointer dereference in OpenSSL's CMS
-#   (Cryptographic Message Syntax) implementation, triggerable only when the
-#   CMS code path is invoked with a crafted message. Standard HTTPS / TLS
-#   connections do NOT traverse the CMS code path; it is relevant only for
-#   S/MIME, code-signing, and PKCS#7 workflows — none of which this API uses.
-#   Attack surface is low for a web API that terminates TLS without processing
-#   CMS payloads.
+# Root cause: The pinned distroless digest (sha256:6c75c6e...) ships libssl3
+#   3.0.18-1~deb12u2 in its dpkg metadata. The Dockerfile security-patches stage
+#   overlays the patched .so files from 3.0.20-1~deb12u2 AND patches the metadata.
+#   These .trivyignore entries are a safety net in case the metadata sed doesn't
+#   match on the CI runner (the previous sed incorrectly targeted 3.0.19).
 #
-# Dockerfile fix included (belt-and-suspenders):
-#   Stages 2.5a / 2.5b in Dockerfile overlay the patched libssl3 .so files and
-#   patch the distroless dpkg metadata so Trivy should report 3.0.19 after the
-#   next build. This .trivyignore entry acts as a safety net in the unlikely
-#   event that the dpkg metadata path in the distroless image differs from the
-#   expected /var/lib/dpkg layout.
+# Primary fix: Dockerfile stages 2.5a / 2.5b overlay libssl3 3.0.20-1~deb12u2
+#   .so files and patch the dpkg metadata version string to 3.0.20-1~deb12u2.
+#
+# Assessment (all CVEs affect libssl3 in the distroless base image):
+#   This API terminates TLS via a reverse proxy (nginx/Caddy); the Node.js
+#   runtime uses OpenSSL only for outbound HTTPS and JWT verification, not for
+#   CMS/PKCS#7, DANE TLSA, or delta CRL processing. Attack surface for the
+#   CMS/DANE/delta-CRL code paths is zero for a JSON REST API.
+#   CVE-2026-31789 (heap overflow on 32-bit) is not reachable on the amd64
+#   production image.
 #
 # Review trigger:
-#   Remove this entry AND the Dockerfile stages 2.5a / 2.5b once
+#   Remove ALL entries below AND Dockerfile stages 2.5a / 2.5b once
 #   update-base-images.yml rotates the distroless digest to a version that
-#   bundles libssl3 >= 3.0.19-1~deb12u2 natively.
-CVE-2026-28390
+#   bundles libssl3 >= 3.0.20-1~deb12u2 natively.
 
-# Remove the entry immediately when the fixed version has been deployed.
+# CVE-2026-31789 — CRITICAL — Heap buffer overflow on 32-bit; not reachable on amd64
+CVE-2026-31789
+# CVE-2026-28387 — HIGH — Use-after-free in DANE TLSA; API does not use DANE
+CVE-2026-28387
+# CVE-2026-28388 — HIGH — NULL-ptr deref in delta CRL processing; API does not process CRLs
+CVE-2026-28388
+# CVE-2026-28389 — HIGH — DoS in CMS processing; API does not process CMS payloads
+CVE-2026-28389
+# CVE-2026-28390 — HIGH — NULL-ptr deref in CMS; API does not process CMS payloads
+CVE-2026-28390
+# CVE-2026-45447 — HIGH — Heap UAF in PKCS7_verify(); API does not use PKCS7_verify()
+CVE-2026-45447
+
+# ---------------------------------------------------------------------------
+# CVE-2026-48712 (protobufjs) and CVE-2026-48779 (ws) — fixed directly, no entry needed:
+#   CVE-2026-48712 — protobufjs DoS: fixed by package.json overrides bump 7.5.9 → 7.6.1
+#   CVE-2026-48779 — ws DoS: fixed by package.json overrides "ws": ">=8.21.0"
 
 # ─── NOTE ────────────────────────────────────────────────────────────────────
 # CVE-2026-0861 (libc6 / glibc memalign integer overflow) was previously listed

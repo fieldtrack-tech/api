@@ -1,380 +1,113 @@
-# FieldTrack 2.0 System Architecture
+# FieldTrack API Architecture
 
-## High-Level Architecture
+This document describes the implemented backend architecture in `api`.
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                          CLIENT LAYER                                   │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                           │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐              │
-│  │   Mobile     │    │     Web      │    │   Desktop    │              │
-│  │     App      │    │   Dashboard  │    │    Client    │              │
-│  └──────┬───────┘    └──────┬───────┘    └──────┬───────┘              │
-│         │                   │                    │                       │
-│         └───────────────────┼────────────────────┘                       │
-│                             │                                            │
-│                             │ HTTPS / REST API                           │
-│                             │                                            │
-└─────────────────────────────┼────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                       APPLICATION LAYER                                 │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                           │
-│  ┌────────────────────────────────────────────────────────────────┐     │
-│  │                    Fastify API Server                          │     │
-│  │                    (Node.js + TypeScript)                      │     │
-│  ├────────────────────────────────────────────────────────────────┤     │
-│  │                                                                 │     │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐        │     │
-│  │  │     Auth     │  │   Business   │  │  Validation  │        │     │
-│  │  │  Middleware  │  │    Logic     │  │   (Zod)      │        │     │
-│  │  └──────────────┘  └──────────────┘  └──────────────┘        │     │
-│  │                                                                 │     │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐        │     │
-│  │  │  Rate Limit  │  │    CORS      │  │   Helmet     │        │     │
-│  │  │   Security   │  │   Security   │  │   Security   │        │     │
-│  │  └──────────────┘  └──────────────┘  └──────────────┘        │     │
-│  │                                                                 │     │
-│  └─────────────────────────┬───────────────────────────────────────     │
-│                            │                                             │
-└────────────────────────────┼─────────────────────────────────────────────┘
-                             │
-                ┌────────────┼────────────┐
-                │            │            │
-                ▼            ▼            ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         DATA LAYER                                      │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                           │
-│  ┌──────────────────────────────────────────────────────────────┐       │
-│  │                    Supabase Platform                         │       │
-│  ├──────────────────────────────────────────────────────────────┤       │
-│  │                                                               │       │
-│  │  ┌────────────────────────────────────────────────────┐     │       │
-│  │  │          PostgreSQL Database                       │     │       │
-│  │  ├────────────────────────────────────────────────────┤     │       │
-│  │  │                                                     │     │       │
-│  │  │  • organizations                                    │     │       │
-│  │  │  • users                                            │     │       │
-│  │  │  • employees                                        │     │       │
-│  │  │  • attendance_sessions                              │     │       │
-│  │  │  • gps_locations                                    │     │       │
-│  │  │  • expenses                                         │     │       │
-│  │  │                                                     │     │       │
-│  │  │  Multi-tenant: Row Level Security (RLS)            │     │       │
-│  │  │                                                     │     │       │
-│  │  └────────────────────────────────────────────────────┘     │       │
-│  │                                                               │       │
-│  │  ┌────────────────────────────────────────────────────┐     │       │
-│  │  │          Authentication (JWT)                      │     │       │
-│  │  └────────────────────────────────────────────────────┘     │       │
-│  │                                                               │       │
-│  └───────────────────────────────────────────────────────────────       │
-│                                                                           │
-└───────────────────────────────────────────────────────────────────────────┘
+## Service Structure
 
-┌─────────────────────────────────────────────────────────────────────────┐
-│                      BACKGROUND JOBS LAYER                              │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                           │
-│  ┌──────────────────────────────────────────────────────────────┐       │
-│  │                      Redis (BullMQ)                          │       │
-│  │                    Job Queue Manager                         │       │
-│  └────────────────────────┬─────────────────────────────────────┘       │
-│                           │                                              │
-│                           ▼                                              │
-│  ┌──────────────────────────────────────────────────────────────┐       │
-│  │                  Distance Worker                             │       │
-│  ├──────────────────────────────────────────────────────────────┤       │
-│  │                                                               │       │
-│  │  • Processes GPS location updates                            │       │
-│  │  • Calculates distances between locations                    │       │
-│  │  • Updates session travel metrics                            │       │
-│  │  • Handles concurrent job processing                         │       │
-│  │                                                               │       │
-│  └──────────────────────────────────────────────────────────────┘       │
-│                                                                           │
-└───────────────────────────────────────────────────────────────────────────┘
+Entry flow:
 
-```
+1. `src/server.ts` initializes telemetry and validates env
+2. `src/app.ts` builds Fastify app, registers plugins and routes
+3. `src/routes/index.ts` registers all module routes
+4. workers are started only after the HTTP server is listening
 
-> Monitoring stack (Prometheus, Grafana, Loki, Tempo) is managed by the **infra repository**.
-> The API exposes `/metrics` and OTLP traces, which the infra repo consumes.
-```
+Core layers:
 
-## Component Details
+- `src/modules/*`: business domains and route handlers
+- `src/middleware/*`: authentication and role enforcement
+- `src/db/*`: tenant-scoped query helper (`orgTable`) and repository patterns
+- `src/plugins/*`: security, docs, metrics, and validation integrations
+- `src/workers/*`: asynchronous processing and scheduled maintenance
 
-### Client Layer
-- **Mobile App**: Field employee mobile application for attendance and location tracking
-- **Web Dashboard**: Admin dashboard for management and analytics
-- **Desktop Client**: Desktop application for supervisors and managers
+## Request Lifecycle
 
-### Application Layer
-- **Fastify API Server**: High-performance Node.js REST API
-  - JWT authentication via Supabase
-  - Multi-tenant isolation with organization context
-  - Rate limiting and security middleware
-  - Zod schema validation via `fastify-type-provider-zod` (`zod.plugin.ts` is the single registration point)
-  - `preValidation` hook for auth — ensures 401/403 always fires before body/querystring schema validation
-  - OpenTelemetry instrumentation
+1. security plugins run (`helmet`, `cors`, rate limiting, abuse logging)
+2. auth middleware resolves identity (JWT/API key)
+3. role guard enforces endpoint access
+4. Zod validation enforces request schemas
+5. handler/service executes tenant-scoped data operations
+6. standardized response envelope is returned
 
-### Data Layer
-- **Supabase PostgreSQL**: Primary database with Row Level Security
-  - Multi-tenant data isolation
-  - Real-time subscriptions support
-  - Built-in authentication
+## Repository and Data Access Pattern
 
-### Background Jobs Layer
-- **Redis + BullMQ**: Distributed job queue
-- **Distance Worker**: Asynchronous GPS processing
-  - Haversine distance calculations
-  - Session travel metrics
-  - Configurable concurrency (`WORKER_CONCURRENCY` env var)
-  - Job retention limits: 1 000 completed, 5 000 failed (prevents Redis memory growth)
+Tenant isolation in application code is enforced through organization scoping:
 
-### Observability
-- The API emits metrics (Prometheus format on `/metrics`), structured logs (Pino/JSON), and traces (OpenTelemetry OTLP)
-- Collection, dashboards, and alerting are handled by the **infra repository**
+- `request.organizationId` is injected by auth middleware
+- repositories use org-scoped filters via `orgTable(...)` or explicit `.eq("organization_id", orgId)`
+- service-role client is used carefully with explicit tenant constraints
 
-## Data Flow
+This protects against cross-tenant data reads/writes at API layer even when using privileged DB credentials.
 
-### Attendance Check-In Flow
-```
-Mobile App
-    │
-    │ POST /attendance/check-in
-    │ { latitude, longitude }
-    │
-    ▼
-Fastify API
-    │
-    ├─▶ preValidation: Auth Middleware (verify JWT)   ← runs first
-    │
-    ├─▶ Validate Request Body (Zod)                  ← runs after auth
-    │
-    ├─▶ Create Session (Supabase)
-    │
-    └─▶ Queue Distance Job (BullMQ)
-            │
-            ▼
-        Distance Worker
-            │
-            ├─▶ Calculate Distance
-            │
-            └─▶ Update Session (Supabase)
-```
+## Worker System (BullMQ + Scheduled Jobs)
 
-### Location Update Flow
-```
-Mobile App
-    │
-    │ POST /locations
-    │ { session_id, latitude, longitude, accuracy, recorded_at }
-    │
-    ▼
-Fastify API
-    │
-    ├─▶ preValidation: Auth Middleware        ← runs first
-    │
-    ├─▶ Validate Body (Zod createLocationSchema)
-    │
-    ├─▶ Validate Active Session
-    │
-    ├─▶ Store Location (Supabase)
-    │
-    └─▶ Queue Distance Job (BullMQ)
-            │
-            ▼
-        Distance Worker
-            │
-            ├─▶ Get Previous Location
-            │
-            ├─▶ Calculate Distance
-            │
-            └─▶ Update Total Distance
-```
+Workers defined and started from `src/workers/startup.ts`:
 
-### Analytics Query Flow
-```
-Web Dashboard
-    │
-    │ GET /analytics/summary
-    │
-    ▼
-Fastify API
-    │
-    ├─▶ Auth Middleware (ADMIN role)
-    │
-    ├─▶ Validate Date Range
-    │
-    ├─▶ Query Aggregated Data (Supabase)
-    │
-    └─▶ Return Metrics
-```
+- distance worker
+  - recalculates session distance/duration
+- analytics worker
+  - updates daily/org aggregates and leaderboard data
+- webhook worker
+  - processes outbound webhook deliveries
+- snapshot worker
+  - maintains denormalized snapshot tables from event jobs
 
-## Deployment Architecture
+Support queues and reliability components:
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         VPS DEPLOYMENT                                  │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                           │
-│  ┌──────────────────────────────────────────────────────────────┐       │
-│  │                         Nginx                                │       │
-│  │                   (Reverse Proxy)                            │       │
-│  │                                                               │       │
-│  │  • SSL/TLS Termination                                       │       │
-│  │  • Load Balancing                                            │       │
-│  │  • Blue-Green Routing                                        │       │
-│  │                                                               │       │
-│  └────────────────────┬─────────────────────────────────────────┘       │
-│                       │                                                  │
-│         ┌─────────────┴─────────────┐                                   │
-│         │                           │                                   │
-│         ▼                           ▼                                   │
-│  ┌─────────────┐            ┌─────────────┐                            │
-│  │   Blue      │            │   Green     │                            │
-│  │ Container   │            │ Container   │                            │
-│  │ (Active)    │            │ (Standby)   │                            │
-│  │             │            │             │                            │
-│  │ Port: 3001  │            │ Port: 3002  │                            │
-│  └─────────────┘            └─────────────┘                            │
-│                                                                           │
-│  ┌──────────────────────────────────────────────────────────────┐       │
-│  │                    Docker Network                            │       │
-│  │                  (api_network)                        │       │
-│  └──────────────────────────────────────────────────────────────┘       │
-│                                                                           │
-│  ┌──────────────────────────────────────────────────────────────┐       │
-│  │                  Monitoring Stack                            │       │
-│  │                                                               │       │
-│  │  Prometheus | Grafana | Loki | Tempo | Promtail             │       │
-│  │                                                               │       │
-│  └──────────────────────────────────────────────────────────────┘       │
-│                                                                           │
-└───────────────────────────────────────────────────────────────────────────┘
+- retry-intent persistence and replay
+- dead-letter queue replay endpoint for distance jobs
+- webhook DLQ listing/retry endpoints
 
-                              ▲
-                              │
-                              │ GitHub Actions CI/CD
-                              │
-┌─────────────────────────────┴─────────────────────────────────────────────┐
-│                      CI/CD PIPELINE                                       │
-├───────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  GitHub Push → Test → Build Docker → Push GHCR → Deploy Blue-Green        │
-│                                                                             │
-│  • Automated testing (125 tests)                                           │
-│  • TypeScript compilation check                                            │
-│  • Docker image build with caching                                         │
-│  • Push to GitHub Container Registry                                       │
-│  • Blue-green deployment with health checks                                │
-│  • Rollback capability (last 5 deployments)                                │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+Scheduled jobs:
 
-## Security Architecture
+- `reconciliation.job.ts`: calls `reconcile_snapshot_tables()` every 5 minutes
+- `retry-cleanup.job.ts`: cleans stale retry intents
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                      SECURITY LAYERS                                    │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                           │
-│  Layer 1: Network Security                                               │
-│  ┌──────────────────────────────────────────────────────────────┐       │
-│  │  • HTTPS/TLS encryption                                      │       │
-│  │  • Nginx reverse proxy                                       │       │
-│  │  • CORS policy enforcement                                   │       │
-│  └──────────────────────────────────────────────────────────────┘       │
-│                                                                           │
-│  Layer 2: Application Security                                           │
-│  ┌──────────────────────────────────────────────────────────────┐       │
-│  │  • Helmet.js security headers                                │       │
-│  │  • Rate limiting (per IP/user)                               │       │
-│  │  • Request validation (Zod schemas)                          │       │
-│  │  • JWT authentication                                        │       │
-│  │  • Role-based access control (RBAC)                          │       │
-│  └──────────────────────────────────────────────────────────────┘       │
-│                                                                           │
-│  Layer 3: Data Security                                                  │
-│  ┌──────────────────────────────────────────────────────────────┐       │
-│  │  • Row Level Security (RLS)                                  │       │
-│  │  • Multi-tenant isolation                                    │       │
-│  │  • Encrypted connections                                     │       │
-│  │  • Audit logging                                             │       │
-│  └──────────────────────────────────────────────────────────────┘       │
-│                                                                           │
-│  Layer 4: Monitoring & Response                                          │
-│  ┌──────────────────────────────────────────────────────────────┐       │
-│  │  • Abuse detection logging                                   │       │
-  │  • Alerting (handled by infra repository)                    │       │
-  │  • Distributed tracing (OpenTelemetry OTLP)                  │       │
-│  │  • Error tracking                                            │       │
-│  └──────────────────────────────────────────────────────────────┘       │
-│                                                                           │
-└───────────────────────────────────────────────────────────────────────────┘
-```
+## Snapshot Table Logic
 
-## Technology Stack
+Snapshot/event model keeps admin reads fast and deterministic.
 
-### Backend
-- **Runtime**: Node.js 24+
-- **Language**: TypeScript 5.9 (strict mode, ESM)
-- **Framework**: Fastify 5
-- **Validation**: Zod 4 (`fastify-type-provider-zod`)
-- **Authentication**: @fastify/jwt
-- **Job Queue**: BullMQ + Redis
+Primary snapshot surfaces maintained by worker + reconciliation:
 
-### Database
-- **Primary**: PostgreSQL (via Supabase)
-- **Cache/Queue**: Redis
-- **ORM**: Supabase Client
+- `employee_last_state`
+- `active_users`
+- `employee_latest_sessions`
+- `employee_metrics_snapshot`
+- `org_dashboard_snapshot`
+- `pending_expenses`
 
-### Security
-- **Headers**: @fastify/helmet
-- **CORS**: @fastify/cors
-- **Rate Limiting**: @fastify/rate-limit
-- **Compression**: @fastify/compress
+Operational model:
 
-### Observability
-- **Metrics**: prom-client (exposed on `/metrics`, scraped by infra repo)
-- **Logs**: Pino (structured JSON, collected by infra repo)
-- **Traces**: OpenTelemetry 2.x (exported via OTLP to `TEMPO_ENDPOINT`)
+- event-driven updates on check-in/check-out/location/expense actions
+- idempotent UPSERT/delete semantics
+- periodic reconciliation self-heals drift when transient failures occur
 
-### DevOps
-- **Containerization**: Docker (node:24-alpine)
-- **Registry**: GitHub Container Registry (GHCR)
-- **CI/CD**: GitHub Actions
-- **Deployment**: Blue-Green with rollback
-- **Reverse Proxy**: Nginx
-- **Testing**: Vitest (125 tests)
+## Auth and Tenant Security
 
-## Scalability Considerations
+Supported auth:
 
-### Horizontal Scaling
-- Stateless API design allows multiple instances
-- Redis-backed job queue for distributed workers
-- Database connection pooling
+- JWT bearer
+- scoped API keys
 
-### Vertical Scaling
-- Configurable worker concurrency
-- Adjustable rate limits
-- Database query optimization
+Authorization:
 
-### Performance Optimizations
-- Docker layer caching in CI/CD
-- npm dependency caching
-- Fastify's high-performance routing
-- Async/await for non-blocking I/O
-- Background job processing for heavy operations
+- role checks via middleware (`ADMIN`, `EMPLOYEE`)
+- endpoint-level `preValidation` guards
 
-## Related Documentation
+Tenant boundaries:
 
-- [Deployment Guide](../docs/DEPLOYMENT.md)
-- [Rollback System](../docs/ROLLBACK_SYSTEM.md)
-- [API Documentation](../README.md)
-- [CI/CD Pipeline](../.github/workflows/deploy.yml)
+- all org data operations apply `organization_id` scoping
+- row-level security exists in DB layer and is complemented by API-layer tenant scoping
+
+## Observability and Operations
+
+Implemented observability:
+
+- Prometheus/OpenMetrics endpoint (`/metrics`)
+- OpenTelemetry traces
+- structured request logging with request id and trace correlation
+- internal and admin operational endpoints (`/internal/*`, `/admin/system-health`, `/admin/queues`)
+
+Real-time admin updates:
+
+- SSE stream at `/admin/events`
+- org-scoped event bus for session and expense updates

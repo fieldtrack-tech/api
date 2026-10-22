@@ -249,7 +249,7 @@ export async function internalRoutes(app: FastifyInstance): Promise<void> {
         const [redisResult, dbResult] = await Promise.allSettled([
           (async (): Promise<CheckResult> => {
             const t0 = Date.now();
-            const client = await distanceQueue.waitUntilReady();
+            const client = (await distanceQueue.waitUntilReady()) as unknown as import("ioredis").Redis;
             await client.ping();
             return { status: "ok", latencyMs: Date.now() - t0 };
           })(),

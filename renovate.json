@@ -1,0 +1,84 @@
+{
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits",
+    ":separateMajorReleases"
+  ],
+  "schedule": [
+    "before 6am on monday"
+  ],
+  "timezone": "UTC",
+  "labels": ["dependencies"],
+  "assignees": [],
+  "reviewers": [],
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 0,
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": ["security"],
+    "assignees": [],
+    "reviewers": []
+  },
+  "packageRules": [
+    {
+      "description": "Group OpenTelemetry packages together",
+      "matchPackagePatterns": ["^@opentelemetry/"],
+      "groupName": "OpenTelemetry",
+      "schedule": ["before 6am on monday"]
+    },
+    {
+      "description": "Group Fastify ecosystem packages",
+      "matchPackagePatterns": ["^@fastify/", "^fastify"],
+      "groupName": "Fastify ecosystem",
+      "schedule": ["before 6am on monday"]
+    },
+    {
+      "description": "Auto-merge security patches for production dependencies",
+      "matchUpdateTypes": ["patch"],
+      "matchDepTypes": ["dependencies"],
+      "matchCurrentVersion": "!/^0/",
+      "automerge": true,
+      "automergeType": "pr",
+      "automergeStrategy": "squash"
+    },
+    {
+      "description": "Security updates get high priority",
+      "matchDatasources": ["npm"],
+      "matchUpdateTypes": ["patch"],
+      "vulnerabilitySeverity": "high",
+      "labels": ["security", "high-priority"],
+      "prPriority": 10
+    },
+    {
+      "description": "Critical security updates get immediate attention",
+      "matchDatasources": ["npm"],
+      "vulnerabilitySeverity": "critical",
+      "labels": ["security", "critical"],
+      "prPriority": 20,
+      "schedule": ["at any time"]
+    },
+    {
+      "description": "Separate major updates for careful review",
+      "matchUpdateTypes": ["major"],
+      "labels": ["major-update"],
+      "automerge": false,
+      "schedule": ["before 6am on the first day of the month"]
+    },
+    {
+      "description": "Dev dependencies can be more aggressive",
+      "matchDepTypes": ["devDependencies"],
+      "automerge": true,
+      "automergeType": "pr",
+      "automergeStrategy": "squash",
+      "matchUpdateTypes": ["patch", "minor"]
+    }
+  ],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on the first day of the month"]
+  },
+  "stabilityDays": 3,
+  "prCreation": "not-pending",
+  "rangeStrategy": "bump"
+}

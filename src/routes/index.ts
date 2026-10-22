@@ -17,6 +17,7 @@ import { webhookDlqRoutes } from "../modules/admin/webhook-dlq.routes.js";
 import { eventsRoutes } from "./events.routes.js";
 import { webhooksRoutes } from "../modules/webhooks/webhooks.routes.js";
 import { authRoutes } from "../modules/auth/auth.routes.js";
+import { crashRoutes } from "../modules/crashes/crashes.routes.js";
 import { auditLogRoutes } from "../modules/admin/audit-log.routes.js";
 import { adminQueuesRoutes } from "../modules/admin/queues.routes.js";
 import { adminRetryIntentsRoutes } from "../modules/admin/retry-intents.routes.js";
@@ -30,6 +31,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   await app.register(internalRoutes);
   await app.register(debugRoutes);
   await app.register(authRoutes);
+  await app.register(crashRoutes);
   await app.register(attendanceRoutes);
   await app.register(locationsRoutes);
   await app.register(expensesRoutes);
