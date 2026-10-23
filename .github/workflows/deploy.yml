@@ -385,7 +385,7 @@ jobs:
           echo "✓ Required deployment secrets verified"
 
       - name: Execute Blue-Green Deployment via SSH
-        uses: appleboy/ssh-action@7eaf76632fa5a71df542cbeccdbad22a0ec17904 # v1.2.0
+        uses: appleboy/ssh-action@7eaf76671a0d7eec5d98ee897acda4f968735a17 # v1.2.0
         with:
           host: ${{ secrets.DO_HOST }}
           username: ${{ secrets.DO_USER }}
@@ -458,7 +458,7 @@ jobs:
           echo "::error::Deployment failure detected — initiating automated rollback for SHA ${{ needs.build-push.outputs.deploy_sha }}"
 
       - name: Execute Rollback via SSH
-        uses: appleboy/ssh-action@7eaf76632fa5a71df542cbeccdbad22a0ec17904 # v1.2.0
+        uses: appleboy/ssh-action@7eaf76671a0d7eec5d98ee897acda4f968735a17 # v1.2.0
         with:
           host: ${{ secrets.DO_HOST }}
           username: ${{ secrets.DO_USER }}
