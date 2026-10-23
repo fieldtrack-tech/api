@@ -225,6 +225,18 @@ for d in "$INFRA_ROOT/nginx/live" "$INFRA_ROOT/nginx/backup"; do
     ok "Infra path ready (writable): $d"
   fi
 done
+if [ -f "$INFRA_ROOT/nginx/live/api.conf" ]; then
+  if [ ! -w "$INFRA_ROOT/nginx/live/api.conf" ]; then
+    warn "Not writable by deploy user: $INFRA_ROOT/nginx/live/api.conf — fixing ownership."
+    sudo chown "$(id -un):$(id -gn)" "$INFRA_ROOT/nginx/live/api.conf" 2>/dev/null || true
+    sudo chmod 644 "$INFRA_ROOT/nginx/live/api.conf" 2>/dev/null || true
+  fi
+  if [ ! -w "$INFRA_ROOT/nginx/live/api.conf" ]; then
+    record_failure "Cannot write to $INFRA_ROOT/nginx/live/api.conf — deploy will fail when updating nginx. Run: sudo chown $(id -un):$(id -gn) $INFRA_ROOT/nginx/live/api.conf"
+  else
+    ok "Infra live config ready (writable): $INFRA_ROOT/nginx/live/api.conf"
+  fi
+fi
 if [ ! -f "$INFRA_ROOT/nginx/api.conf" ]; then
   record_failure "Missing nginx template: $INFRA_ROOT/nginx/api.conf (infra bootstrap required)"
 else

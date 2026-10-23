@@ -503,7 +503,34 @@ _ft_ensure_infra_nginx_dirs() {
             return 1
         fi
     done
+
+    # Live config file writability guard: self-heal root ownership if watchdog or manual run touched it
+    if [ -f "$NGINX_CONF" ] && [ ! -w "$NGINX_CONF" ]; then
+        _ft_log "msg='nginx live conf not writable; fixing ownership' path=$NGINX_CONF user=$(id -un)"
+        sudo chown "$(id -un):$(id -gn)" "$NGINX_CONF" 2>/dev/null || true
+        sudo chmod 644 "$NGINX_CONF" 2>/dev/null || true
+    fi
+    if [ -f "$NGINX_CONF" ] && [ ! -w "$NGINX_CONF" ]; then
+        _ft_log "level=ERROR msg='nginx live conf not writable after chown' path=$NGINX_CONF user=$(id -un)"
+        return 1
+    fi
     return 0
+}
+
+# ---------------------------------------------------------------------------
+# _ft_restore_nginx_conf — atomic restore from backup with correct permissions
+# ---------------------------------------------------------------------------
+_ft_restore_nginx_conf() {
+    local src="$1"
+    if [ ! -f "$src" ]; then
+        _ft_log "level=ERROR msg='backup config file not found' path=$src"
+        return 1
+    fi
+    local rtmp
+    rtmp="$(mktemp "${NGINX_LIVE_DIR}/.api-nginx-restore.XXXXXX.conf")"
+    cp "$src" "$rtmp"
+    chmod 644 "$rtmp"
+    mv -f "$rtmp" "$NGINX_CONF"
 }
 
 # ---------------------------------------------------------------------------
@@ -844,7 +871,7 @@ switch_nginx() {
     _ft_ensure_infra_nginx_dirs || _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=infra_nginx_dirs_not_writable"
     local backup tmp
     backup="$NGINX_BACKUP_DIR/api.conf.bak.$(date +%s)"
-    tmp="$(mktemp /tmp/api-nginx.XXXXXX.conf)"
+    tmp="$(mktemp "${NGINX_LIVE_DIR}/.api-nginx.XXXXXX.conf")"
 
     # Pre-reload gate — one final health probe before writing nginx config
     if ! _ft_net_curl "$INACTIVE_NAME" \
@@ -853,6 +880,7 @@ switch_nginx() {
         docker logs "$INACTIVE_NAME" --tail 50 >&2 || true
         docker stop --time 10 "$INACTIVE_NAME" 2>/dev/null || true
         docker rm "$INACTIVE_NAME" || true
+        rm -f "$tmp"
         _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=pre_reload_gate_failed"
     fi
 
@@ -860,10 +888,12 @@ switch_nginx() {
         -e "s|__ACTIVE_CONTAINER__|$INACTIVE_NAME|g" \
         -e "s|__API_HOSTNAME__|$API_HOSTNAME|g" \
         "$NGINX_TEMPLATE" > "$tmp"
+    chmod 644 "$tmp"
 
-    cp "$NGINX_CONF" "$backup"
-    cp "$tmp" "$NGINX_CONF"
-    rm -f "$tmp"
+    if [ -f "$NGINX_CONF" ]; then
+        cp "$NGINX_CONF" "$backup" 2>/dev/null || sudo cp "$NGINX_CONF" "$backup"
+    fi
+    mv -f "$tmp" "$NGINX_CONF"
     ls -1t "$NGINX_BACKUP_DIR"/api.conf.bak.* 2>/dev/null | tail -n +6 | xargs rm -f 2>/dev/null || true
 
     # nginx network guard before every reload
@@ -872,7 +902,7 @@ switch_nginx() {
         --format='{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' 2>/dev/null || echo "")
     if ! echo "$net" | grep -q "$NETWORK"; then
         _ft_log "level=ERROR msg='nginx not on api_network at reload time' networks=${net}"
-        cp "$backup" "$NGINX_CONF"
+        _ft_restore_nginx_conf "$backup"
         _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=nginx_network_mismatch"
     fi
 
@@ -880,13 +910,13 @@ switch_nginx() {
     test_out=$(docker exec nginx nginx -t 2>&1) || {
         printf '%s\n' "$test_out" >&2
         _ft_log "level=ERROR msg='nginx config test failed — restoring backup'"
-        cp "$backup" "$NGINX_CONF"
+        _ft_restore_nginx_conf "$backup"
         _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=nginx_config_test_failed"
     }
 
     # === SINGLE nginx reload per deploy ===
     docker exec nginx nginx -s reload >/dev/null 2>&1 \
-        || { cp "$backup" "$NGINX_CONF"; _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=nginx_reload_failed"; }
+        || { _ft_restore_nginx_conf "$backup"; _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=nginx_reload_failed"; }
     _ft_log "msg='nginx reloaded (once)' upstream=$INACTIVE_NAME:$APP_PORT"
 
     # FIX 1: Add nginx settling window to prevent stale config reads
@@ -900,7 +930,7 @@ switch_nginx() {
         | grep -oE 'api-blue|api-green' | head -1 || echo "")
     if [ "$actual_upstream" != "$INACTIVE_NAME" ]; then
         _ft_log "level=ERROR msg='nginx upstream sanity failed' expected=$INACTIVE_NAME actual=${actual_upstream:-unreadable}"
-        cp "$backup" "$NGINX_CONF"
+        _ft_restore_nginx_conf "$backup"
         docker exec nginx nginx -t >/dev/null 2>&1 && docker exec nginx nginx -s reload >/dev/null 2>&1 || true
         _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=nginx_upstream_mismatch"
     fi
@@ -1042,7 +1072,7 @@ _restore_nginx_and_slot() {
     # and must NOT trigger an additional external rollback.
     _FT_DEPLOY_RESULT="RESTORED"
     _ft_log "msg='restoring previous nginx config' slot=$prev_slot"
-    cp "$NGINX_BACKUP" "$NGINX_CONF"
+    _ft_restore_nginx_conf "$NGINX_BACKUP"
     if docker exec nginx nginx -t >/dev/null 2>&1 && docker exec nginx nginx -s reload >/dev/null 2>&1; then
         _ft_log "msg='nginx restored'"
     else
@@ -1234,14 +1264,14 @@ main() {
         # maintenance config as a rollback target for the routed verification.
         _ft_ensure_infra_nginx_dirs || _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=infra_nginx_dirs_not_writable"
         if [ -f "$NGINX_CONF" ]; then
-            cp "$NGINX_CONF" "$NGINX_BACKUP"
+            cp "$NGINX_CONF" "$NGINX_BACKUP" 2>/dev/null || sudo cp "$NGINX_CONF" "$NGINX_BACKUP"
         fi
-        local boot_tmp; boot_tmp="$(mktemp /tmp/api-nginx-boot.XXXXXX.conf)"
+        local boot_tmp; boot_tmp="$(mktemp "${NGINX_LIVE_DIR}/.api-nginx-boot.XXXXXX.conf")"
         sed -e "s|__ACTIVE_CONTAINER__|$INACTIVE_NAME|g" \
             -e "s|__API_HOSTNAME__|${API_HOSTNAME}|g" \
             "$NGINX_TEMPLATE" > "$boot_tmp"
-        cp "$boot_tmp" "$NGINX_CONF"
-        rm -f "$boot_tmp"
+        chmod 644 "$boot_tmp"
+        mv -f "$boot_tmp" "$NGINX_CONF"
         local net_check
         net_check=$(docker inspect nginx \
             --format='{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' 2>/dev/null || echo "")
