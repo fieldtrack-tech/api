@@ -86,6 +86,8 @@ PREFLIGHT_STRICT="${PREFLIGHT_STRICT:-false}"
 #                         (deploy.sh handled recovery — CI must NOT re-rollback)
 #   FAILED             -- catastrophic failure, both deploy and internal
 #                         rollback failed (manual intervention required)
+#   NO_OP              -- target SHA was already running and healthy;
+#                         no changes were made (idempotent re-run)
 # ---------------------------------------------------------------------------
 _FT_DEPLOY_RESULT="FAILED_PRE_SWITCH"
 
@@ -689,6 +691,7 @@ idempotency_check() {
             _ft_log "msg='target SHA already running and healthy — nothing to do' container=$ACTIVE_NAME"
             _ft_final_state "$ACTIVE_NAME" "$IMAGE_SHA"
             _ft_github_summary "✅ IDEMPOTENT (no change)" "$ACTIVE_NAME" "$IMAGE_SHA" "SHA already deployed"
+            _FT_DEPLOY_RESULT="NO_OP"
             _ft_exit 0 "DEPLOY_SUCCESS" "reason=idempotent_noop sha=$IMAGE_SHA"
         fi
         _ft_log "msg='SHA matches but container not healthy — proceeding' container=$ACTIVE_NAME"
