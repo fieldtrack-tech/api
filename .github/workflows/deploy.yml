@@ -1,0 +1,947 @@
+# .github/workflows/deploy.yml
+#
+# Production Deployment Pipeline
+#
+# Design principles:
+#   1. Triggered ONLY after CodeQL deep scan completes successfully — no polling, no race.
+#      Uses workflow_run event: deploy is event-driven, not concurrent with security scan.
+#   2. Runs ALL validation from scratch — no trust built on PR results alone
+#   3. target: production + build-args mirror pr.yml exactly (bit-for-bit parity)
+#   4. Image digest verified against PR simulation artifact when available
+#   5. Blue-Green deploy with automatic rollback on health or smoke test failure
+#   6. timeout-minutes on every job — hung processes never block CI indefinitely
+#   7. npm ci retried up to 3x — registry flakiness never kills a valid deploy
+#
+# Pipeline order:
+#   codeql-gate
+#     ├─► validate ─┐
+#     └─► test-api  ├─► build-push ─► vps-readiness-check ─► deploy
+#                   ┘                                                  │
+#                                             api-health-gate ◄────────┘
+#                                                   │
+#                                             health-and-smoke
+#                                                   │
+#                                              rollback ◄───────────────── (on failure)
+
+name: Deploy to Production
+
+on:
+  # Triggered ONLY when the CodeQL deep scan workflow completes on master.
+  # This replaces the previous push trigger + polling approach:
+  #   - No race conditions (workflow_run fires AFTER codeql-deep finishes)
+  #   - No API polling loops or timing-dependent checks
+  #   - Deployment is blocked at the event level if CodeQL did not succeed
+  workflow_run:
+    workflows: ["CodeQL — Deep Scan (post-merge)"]
+    types:
+      - completed
+    branches:
+      - master
+  # Manual dispatch retained for emergency/hotfix deploys.
+  # The codeql-gate job enforces the conclusion check only for workflow_run.
+  workflow_dispatch:
+
+# Never cancel an in-progress deployment — let it finish or fail cleanly.
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+# Default to read-only. Jobs that need additional access declare it explicitly.
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # JOB: codeql-gate
+  #
+  # First job in every deploy run. Two responsibilities:
+  #
+  #   1. SECURITY GATE (workflow_run only):
+  #      Reads github.event.workflow_run.conclusion and fails hard if CodeQL
+  #      did not pass. This makes the event-driven guarantee explicit and
+  #      visible in the pipeline UI.
+  #
+  #   2. SHA RESOLUTION:
+  #      On workflow_run, github.sha = HEAD of default branch at event time,
+  #      NOT the commit that triggered CodeQL. We must deploy exactly the SHA
+  #      that was scanned. Exports deploy_sha = github.event.workflow_run.head_sha
+  #      so all downstream jobs checkout and tag the correct commit.
+  #      On workflow_dispatch, deploy_sha = github.sha (HEAD of triggered branch).
+  #
+  # All subsequent jobs that do git checkout use ref: needs.codeql-gate.outputs.deploy_sha.
+  # ---------------------------------------------------------------------------
+  codeql-gate:
+    name: CodeQL Security Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      deploy_sha: ${{ steps.sha.outputs.deploy_sha }}
+    steps:
+      - name: Resolve deploy SHA
+        id: sha
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            echo "deploy_sha=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "deploy_sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify CodeQL deep scan passed
+        if: github.event_name == 'workflow_run'
+        run: |
+          CONCLUSION="${{ github.event.workflow_run.conclusion }}"
+          BRANCH="${{ github.event.workflow_run.head_branch }}"
+          SHA="${{ github.event.workflow_run.head_sha }}"
+          echo "CodeQL deep scan conclusion : $CONCLUSION"
+          echo "Scanned commit SHA          : $SHA"
+          echo "Head branch                 : $BRANCH"
+          # Branch guard: only master commits deploy to production.
+          # The workflow_run trigger already filters branches: [master], but this
+          # explicit check makes the policy visible in the job log and provides a
+          # hard error if the filter is ever widened accidentally.
+          if [ "$BRANCH" != "master" ]; then
+            echo "::error::Deploy blocked — head_branch=$BRANCH (only master is allowed to deploy to production)."
+            exit 1
+          fi
+          if [ "$CONCLUSION" != "success" ]; then
+            echo "::error::CodeQL deep scan did not pass (conclusion=$CONCLUSION)."
+            echo "  Deployment is blocked. Review findings before retrying:"
+            echo "  https://github.com/${{ github.repository }}/security/code-scanning"
+            exit 1
+          fi
+          echo "✓ CodeQL gate passed — safe to deploy SHA $SHA (branch=$BRANCH)"
+
+  # ---------------------------------------------------------------------------
+  # JOB: validate
+  #
+  # Fast pre-flight: TypeScript check + dependency audit.
+  # Runs in parallel with test-api to maximise pipeline speed.
+  # ---------------------------------------------------------------------------
+  validate:
+    name: Validate (typecheck + audit)
+    runs-on: ubuntu-latest
+    needs: [codeql-gate]
+    timeout-minutes: 10
+    steps:
+      - name: Confirm deployment trigger
+        run: |
+          echo "========================================="
+          echo "Deployment triggered on master"
+          echo "  Commit SHA  : ${{ github.sha }}"
+          echo "  Event       : ${{ github.event_name }}"
+          echo "  Ref         : ${{ github.ref }}"
+          echo "========================================="
+
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.codeql-gate.outputs.deploy_sha }}
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies (with retry)
+        run: |
+          echo "::group::npm ci"
+          for attempt in 1 2 3; do
+            npm ci && break
+            [ $attempt -eq 3 ] && { echo "::error::npm ci failed after 3 attempts"; exit 1; }
+            echo "Attempt $attempt failed — retrying in 15s..."
+            sleep 15
+          done
+          echo "::endgroup::"
+
+      - name: TypeScript check
+        run: npm run typecheck
+
+      - name: Fastify bootstrap sanity check
+        run: npm run ci:bootstrap
+
+      - name: Env contract guard (no direct process.env outside env.ts)
+        run: |
+          if grep -r --include="*.ts" "process\.env" src/ \
+               | grep -v "src/config/env\.ts"; then
+            echo "::error::Direct process.env access detected outside env.ts — use: import { env } from './config/env.js' instead"
+            echo "   Use: import { env } from './config/env.js' instead"
+            exit 1
+          fi
+          echo "✅ Env contract clean — no direct process.env access outside env.ts"
+
+  # ---------------------------------------------------------------------------
+  # JOB: test-api
+  #
+  # Full backend test suite — unit tests then integration tests.
+  # Runs in parallel with validate.
+  # ---------------------------------------------------------------------------
+  test-api:
+    name: API Tests (unit + integration)
+    runs-on: ubuntu-latest
+    needs: [codeql-gate]
+    timeout-minutes: 15
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL_TEST }}
+      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY_TEST }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_TEST }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.codeql-gate.outputs.deploy_sha }}
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies (with retry)
+        run: |
+          echo "::group::npm ci"
+          for attempt in 1 2 3; do
+            npm ci && break
+            [ $attempt -eq 3 ] && { echo "::error::npm ci failed after 3 attempts"; exit 1; }
+            echo "Attempt $attempt failed — retrying in 15s..."
+            sleep 15
+          done
+          echo "::endgroup::"
+
+      - name: Run all tests
+        run: npm test
+
+  # ---------------------------------------------------------------------------
+  # JOB: infra-leakage-guard
+  #
+  # Pre-deploy safety gate: ensures the API repo has not re-introduced
+  # references to infra concerns (monitoring stack, /ready in deploy path).
+  # Runs in parallel with validate and test-api.
+  #
+  # Guards:
+  #   1. No alertmanager/docker-compose.monitoring client code in src/ or tests/
+  #   2. No docker-compose.monitoring references in deploy.sh or deploy.yml executable steps
+  #   3. No /ready usage in scripts/deploy.sh (health gate must use /health only)
+  # ---------------------------------------------------------------------------
+  infra-leakage-guard:
+    name: Infra Leakage Guard
+    runs-on: ubuntu-latest
+    needs: [codeql-gate]
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.codeql-gate.outputs.deploy_sha }}
+
+      - name: Block monitoring infra client references in API source
+        run: |
+          # The API legitimately uses prom-client (prometheus.ts plugin) and emits
+          # OTLP traces. What must NOT appear is external infra client code —
+          # i.e., direct references to alertmanager, loki push clients, or
+          # docker-compose.monitoring in the application source.
+          # Exclude comment-only lines (-h suppresses filenames for grep -Ev).
+          # With bash -o pipefail (GHA default), grep exits 1 when there are zero matches;
+          # that must not fail the step — only non-empty LEAKS after filtering is an error.
+          LEAKS=$(grep -rhE "(alertmanager|docker-compose\.monitoring)" src/ tests/ 2>/dev/null \
+                    | grep -Ev '^\s*(//|#|\*|/\*)' || true)
+          if [ -n "$LEAKS" ]; then
+            echo "::error::Infra client references found in src/ or tests/"
+            echo "$LEAKS"
+            exit 1
+          fi
+          echo "✓ No alertmanager/monitoring-compose references in src/ or tests/"
+
+      - name: Block docker-compose.monitoring references in deploy path
+        run: |
+          # Check deploy.sh (the executable deploy script) only.
+          # Searching deploy.yml for its own guard step is circular and self-defeating;
+          # the workflow's guard is enforced at the job level by the existence of this step.
+          if grep -E "docker-compose\.monitoring" scripts/deploy.sh 2>/dev/null | grep -Ev '^\s*#'; then
+            echo "::error::deploy.sh references docker-compose.monitoring — deploy must be monitoring-independent"
+            exit 1
+          fi
+          echo "✓ No docker-compose.monitoring references in scripts/deploy.sh"
+
+      - name: Block /ready in deploy path (deploy.sh)
+        run: |
+          if grep -E "(/ready)" scripts/deploy.sh | grep -Ev '^\s*#'; then
+            echo "::error::deploy.sh references /ready — deploy gate must use /health only"
+            exit 1
+          fi
+          echo "✓ deploy.sh does not reference /ready"
+
+      - name: Infra contract naming guard
+        run: |
+          # Enforce canonical naming contract (docs/infra-contract.md).
+          # Redis guard: scan the repo but skip docs, tests, markdown, and known local-dev fixtures.
+          FAIL=0
+
+          # Guard 1: no stale network name (fieldtrack_network is not the canonical name)
+          if grep -rE '\bfieldtrack_network\b' src/ scripts/ \
+               --include='*.ts' --include='*.sh' \
+               2>/dev/null | grep -Ev '^[^:]+:\s*(#|//)'; then
+            echo "::error::Forbidden network name 'fieldtrack_network' found — canonical name is 'api_network'"
+            FAIL=1
+          fi
+
+          # Guard 2: no localhost Redis URLs outside allowed paths (see docs/infra-contract.md)
+          if grep -rE 'redis://localhost:[0-9]+|redis://127\.0\.0\.1:[0-9]+' . \
+               --exclude-dir=docs \
+               --exclude-dir=tests \
+               --exclude-dir=node_modules \
+               --exclude-dir=.git \
+               --exclude-dir=codeql-db \
+               --exclude='*.md' \
+               --exclude='*.test.ts' \
+               --exclude='*.unit.ts' \
+               --exclude='.env.example.dev' \
+               2>/dev/null | grep -Fv 'env-setup.ts' | grep -q .; then
+            echo "::error::localhost Redis URL found in production paths — canonical URL is redis://redis:6379"
+            FAIL=1
+          fi
+
+          [ "$FAIL" -eq 0 ] || exit 1
+          echo "✓ Infra contract naming guard passed (api_network, redis://redis:6379)"
+
+  # ---------------------------------------------------------------------------
+  # JOB: build-push
+  #
+  # Build the production image locally, then push that exact image to GHCR.
+  #
+  # Image digest verification:
+  #   After building, the digest is compared against the digest stored by
+  #   pr.yml's production-simulation job. A match confirms bit-for-bit parity
+  #   between what was validated in PR and what is being deployed.
+  #   Comparison is best-effort (continue-on-error) because the merge commit
+  #   SHA may differ from the PR head SHA on squash-merges.
+  # ---------------------------------------------------------------------------
+  build-push:
+    name: Build & Push Docker Image
+    runs-on: ubuntu-latest
+    needs: [codeql-gate, validate, test-api, infra-leakage-guard]
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+    outputs:
+      sha_short:  ${{ steps.meta.outputs.sha_short }}
+      digest:     ${{ steps.digest.outputs.digest }}
+      deploy_sha: ${{ steps.meta.outputs.deploy_sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.codeql-gate.outputs.deploy_sha }}
+
+      - name: Extract commit SHA
+        id: meta
+        env:
+          DEPLOY_SHA: ${{ needs.codeql-gate.outputs.deploy_sha }}
+        run: |
+          echo "sha_short=${DEPLOY_SHA::7}" >> "$GITHUB_OUTPUT"
+          echo "deploy_sha=$DEPLOY_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Pull base images (force fresh manifest, prevent stale GHA cache)
+        run: |
+          docker pull node:24.2.0-bookworm-slim
+          docker pull gcr.io/distroless/nodejs24-debian12:nonroot
+
+      # Phase 1: Build into local Docker daemon for scanning.
+      # EXACT same parameters as pr.yml production-simulation:
+      #   target: production, build-args: NODE_ENV=production, GHA cache.
+      # CACHE_BUSTER forces rebuild when package-lock.json changes (prevents stale deps).
+      # Cache scoped to production to prevent cross-branch contamination from PR builds.
+      - name: Build Docker image (pre-scan, no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          target: production
+          build-args: |
+            NODE_ENV=production
+            CACHE_BUSTER=${{ hashFiles('**/package-lock.json') }}
+          push: false
+          load: true
+          pull: true
+          tags: |
+            fieldtrack-api:${{ steps.meta.outputs.sha_short }}
+          cache-from: type=gha,scope=production
+          cache-to: type=gha,mode=max,scope=production
+
+      # Verify Node.js runtime — exercises TLS stack, not just compile-time version constant.
+      # tls.createSecureContext() fails if libssl linkage is broken, proving runtime health.
+      - name: Verify Node.js runtime (TLS operational check)
+        run: |
+          IMAGE_NAME="fieldtrack-api:${{ steps.meta.outputs.sha_short }}"
+          echo "Testing image: $IMAGE_NAME"
+          docker run --rm \
+            --entrypoint /nodejs/bin/node \
+            "$IMAGE_NAME" \
+            -e "
+              const crypto = require('crypto');
+              const tls = require('tls');
+              const ctx = tls.createSecureContext();
+              if (!ctx) { process.stderr.write('FAIL: TLS context failed\n'); process.exit(1); }
+              const h = crypto.createHash('sha256').update('smoke').digest('hex');
+              if (!h) { process.stderr.write('FAIL: hash failed\n'); process.exit(1); }
+              process.stdout.write('node=' + process.versions.node + ' openssl=' + process.versions.openssl + ' tls=ok\n');
+            "
+
+      # Capture the content-addressable image digest.
+      # With cache scoping and cache busting, digest should always reproduce correctly.
+      - name: Capture image digest
+        id: digest
+        run: |
+          IMAGE_NAME="fieldtrack-api:${{ steps.meta.outputs.sha_short }}"
+          DIGEST=$(docker inspect "$IMAGE_NAME" --format='{{.Id}}')
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "::group::Build traceability"
+          echo "  Commit SHA   : ${{ github.sha }}"
+          echo "  Image tag    : $IMAGE_NAME"
+          echo "  Image digest : $DIGEST"
+          echo "::endgroup::"
+
+      # Compare this digest with the one stored by pr.yml's production-simulation.
+      # A match = bit-for-bit parity. A mismatch = code/cache divergence (warning).
+      # continue-on-error: true — squash merges produce a new commit SHA, which
+      # may cause minor divergence even with identical source code.
+      - name: Verify image digest parity with PR simulation
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Find the PR number associated with this merge commit
+          PR_NUMBER=$(gh api \
+            "/repos/${{ github.repository }}/commits/${{ github.sha }}/pulls" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            --jq '.[0].number // empty' 2>/dev/null || echo "")
+
+          if [ -z "$PR_NUMBER" ]; then
+            echo "No associated PR found for commit ${{ github.sha }} — skipping digest comparison."
+            exit 0
+          fi
+
+          echo "Associated PR: #${PR_NUMBER}"
+
+          # Find the most recent successful pr.yml run for this PR
+          RUN_ID=$(gh run list \
+            --repo "${{ github.repository }}" \
+            --workflow "pr.yml" \
+            --json databaseId,conclusion,headSha \
+            --jq "map(select(.conclusion == \"success\")) | .[0].databaseId // empty" \
+            2>/dev/null || echo "")
+
+          if [ -z "$RUN_ID" ]; then
+            echo "No successful PR validation run found — skipping digest comparison."
+            exit 0
+          fi
+
+          # Download the image-digest artifact from that run
+          gh run download "$RUN_ID" \
+            --repo "${{ github.repository }}" \
+            --name "image-digest-pr-${PR_NUMBER}" \
+            --dir /tmp/pr-digest \
+            2>/dev/null || true
+
+          if [ ! -f /tmp/pr-digest/image-digest.txt ]; then
+            echo "PR image-digest artifact not found — skipping comparison."
+            exit 0
+          fi
+
+          PR_DIGEST=$(cat /tmp/pr-digest/image-digest.txt)
+          DEPLOY_DIGEST="${{ steps.digest.outputs.digest }}"
+
+          echo "PR simulation digest: $PR_DIGEST"
+          echo "Deploy image digest:  $DEPLOY_DIGEST"
+
+          if [ "$PR_DIGEST" = "$DEPLOY_DIGEST" ]; then
+            echo "✓ Digest match — bit-for-bit parity confirmed between PR and deploy."
+          else
+            echo "⚠ Digest mismatch — builds diverged between PR and deploy."
+            echo "  Expected on squash-merges where the commit SHA changes."
+            echo "  Ensure no source changes occurred between PR approval and deploy trigger."
+          fi
+
+      # Push the exact locally built image without rebuilding.
+      - name: Verify image digest unchanged before push
+        env:
+          IMAGE_NAME: fieldtrack-api:${{ steps.meta.outputs.sha_short }}
+          IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
+        run: |
+          # docker inspect .Id returns the config digest (sha256:...) which is
+          # stable across tag operations — same value captured in the digest step.
+          CURRENT=$(docker inspect "$IMAGE_NAME" --format='{{.Id}}')
+          echo "Expected digest : $IMAGE_DIGEST"
+          echo "Current digest  : $CURRENT"
+          if [ "$CURRENT" != "$IMAGE_DIGEST" ]; then
+            echo "ERROR: image digest changed before push — aborting."
+            exit 1
+          fi
+          echo "✓ Digest verified — pushing the image that was built."
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push verified image to registry
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          # Tag and push using the FULL commit SHA so deploy.sh can reference
+          # the exact image via IMAGE=ghcr.io/.../api:$deploy_sha.
+          # Short SHA (sha_short) is kept as a convenience alias only.
+          docker tag \
+            fieldtrack-api:${{ steps.meta.outputs.sha_short }} \
+            ghcr.io/${OWNER}/api:${{ steps.meta.outputs.deploy_sha }}
+          docker push ghcr.io/${OWNER}/api:${{ steps.meta.outputs.deploy_sha }}
+          # Also push short-SHA alias for human convenience (inspect, debugging).
+          docker tag \
+            fieldtrack-api:${{ steps.meta.outputs.sha_short }} \
+            ghcr.io/${OWNER}/api:${{ steps.meta.outputs.sha_short }}
+          docker push ghcr.io/${OWNER}/api:${{ steps.meta.outputs.sha_short }}
+          echo "✓ Pushed ghcr.io/${OWNER}/api:${{ steps.meta.outputs.deploy_sha }} (full SHA — reference for deploy)"
+
+      - name: Save build provenance
+        env:
+          IMAGE_NAME: fieldtrack-api:${{ steps.meta.outputs.sha_short }}
+          IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
+        run: |
+          echo "commit=${{ needs.codeql-gate.outputs.deploy_sha }}" > provenance.txt
+          echo "ref=${{ github.ref }}" >> provenance.txt
+          echo "image=${IMAGE_NAME}" >> provenance.txt
+          echo "registry_tag=ghcr.io/${{ github.repository_owner }}/api:${{ steps.meta.outputs.deploy_sha }}" >> provenance.txt
+          echo "digest=${IMAGE_DIGEST}" >> provenance.txt
+          echo "workflow=${{ github.workflow }}" >> provenance.txt
+          echo "run_id=${{ github.run_id }}" >> provenance.txt
+
+      - name: Upload provenance artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: provenance-${{ steps.meta.outputs.sha_short }}
+          path: provenance.txt
+          retention-days: 90
+
+      - name: Build & push summary
+        if: always()
+        env:
+          IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
+        run: |
+          {
+            echo "## Build · Push"
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Deploy SHA | \`${{ steps.meta.outputs.deploy_sha }}\` |"
+            echo "| Image tag (local) | \`fieldtrack-api:${{ steps.meta.outputs.sha_short }}\` |"
+            echo "| Registry tag | \`ghcr.io/${{ github.repository_owner }}/api:${{ steps.meta.outputs.deploy_sha }}\` |"
+            echo "| Image digest | \`${IMAGE_DIGEST}\` |"
+            echo "| Registry | ghcr.io/${{ github.repository_owner }}/api |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # JOB: vps-readiness-check
+  #
+  # Validates the VPS is in a deployable state BEFORE running the deploy.
+  # Runs in PARALLEL with vps-readiness-check (both depend on build-push).
+  # Both must succeed before deploy is allowed to proceed.
+  #
+  # Delegates to scripts/vps-readiness-check.sh which checks:
+  #   - Docker daemon running
+  #   - api_network exists (auto-created if missing)
+  #   - Ports 80/443 free from non-nginx processes
+  #   - No API containers with host port bindings
+  #   - Required .env file present
+  #   - Runtime directories present (auto-created if missing)
+  #   - Sufficient disk space (auto-prunes if borderline)
+  # ---------------------------------------------------------------------------
+  vps-readiness-check:
+    name: VPS Readiness Gate
+    runs-on: ubuntu-latest
+    needs: [build-push]
+    timeout-minutes: 10
+    steps:
+      - name: Run VPS readiness check via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: ${{ secrets.DO_USER }}
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
+            export INFRA_ROOT="${INFRA_ROOT:-/opt/infra}"
+            [ -d "$DEPLOY_ROOT" ] || { echo "::error::DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
+            cd "$DEPLOY_ROOT"
+            # Pull latest scripts without full deploy
+            git fetch origin master --depth=1
+            git checkout origin/master -- scripts/vps-readiness-check.sh 2>/dev/null || true
+            chmod +x scripts/vps-readiness-check.sh
+            ./scripts/vps-readiness-check.sh
+
+  # ---------------------------------------------------------------------------
+  # JOB: deploy
+  #
+  # Blue-Green deployment to VPS via SSH.
+  # deploy.sh manages slot switching and container health.
+  #
+  # DEPENDENCY GATES (both must pass):
+  #   - vps-readiness-check: ensures VPS can accept the deployment
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: Deploy (Blue-Green SSH)
+    runs-on: ubuntu-latest
+    needs: [build-push, vps-readiness-check]
+    timeout-minutes: 20
+    steps:
+      - name: Validate required deployment secrets
+        env:
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
+          CORS_ORIGIN: ${{ secrets.CORS_ORIGIN }}
+        run: |
+          if [ -z "${API_BASE_URL:-}" ]; then
+            echo "::error::API_BASE_URL secret is not set. Deployment aborted."
+            exit 1
+          fi
+          echo "✓ API_BASE_URL is set"
+          if [ -z "${CORS_ORIGIN:-}" ]; then
+            echo "::error::CORS_ORIGIN secret is not set. Deployment aborted."
+            exit 1
+          fi
+          echo "✓ CORS_ORIGIN is set"
+
+      - name: Log deployment metadata and trigger info
+        run: |
+          DEPLOY_SHA="${{ needs.build-push.outputs.deploy_sha }}"
+          {
+            echo "## Deployment Initiated"
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Deploy SHA | \`${DEPLOY_SHA}\` |"
+            echo "| Trigger event | ${{ github.event_name }} |"
+            echo "| Triggered by | ${{ github.actor }} |"
+            echo "| Branch | ${{ github.ref_name }} |"
+            echo "| Workflow run | [${{ github.run_id }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) |"
+            echo "| Commit message | \`${{ github.event.head_commit.message }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "[DEPLOY] Deployment initiated — SHA=${DEPLOY_SHA} EVENT=${{ github.event_name }} ACTOR=${{ github.actor }}"
+
+      - name: Blue-Green deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: ${{ secrets.DO_USER }}
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            T0=$(date +%s)
+            export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
+            export INFRA_ROOT="${INFRA_ROOT:-/opt/infra}"
+            [ -d "$DEPLOY_ROOT" ] || { echo "::error::DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
+            cd "$DEPLOY_ROOT"
+            # Enforce repo is at the exact SHA being deployed (issue 7 — prevents
+            # stale deploy scripts if another commit landed during this pipeline run).
+            git fetch origin
+            git reset --hard ${{ needs.build-push.outputs.deploy_sha }}
+            chmod +x scripts/*.sh
+            ./scripts/deploy.sh "${{ needs.build-push.outputs.deploy_sha }}"
+            echo "[DEPLOY] Deploy completed in $(($(date +%s) - T0))s"
+
+      - name: Log deployment state (slot + SHA for debugging)
+        uses: appleboy/ssh-action@v1.0.3
+        if: always()
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: ${{ secrets.DO_USER }}
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
+            export INFRA_ROOT="${INFRA_ROOT:-/opt/infra}"
+            ACTIVE_SLOT=$(cat "$DEPLOY_ROOT/.fieldtrack/active-slot" 2>/dev/null || cat /var/lib/fieldtrack/active-slot 2>/dev/null || echo "unknown")
+            ACTIVE_CONTAINER="api-${ACTIVE_SLOT}"
+            DEPLOY_STATUS="UNKNOWN"
+
+            # Health check via in-network curl container — exercises Docker DNS
+            # and bridge routing (same path nginx uses). NO host port binding needed.
+            FT_CURL_IMG="curlimages/curl:8.7.1"
+            if docker inspect "$ACTIVE_CONTAINER" >/dev/null 2>&1; then
+              if docker run --rm --network api_network "$FT_CURL_IMG" \
+                  -sf --max-time 5 "http://$ACTIVE_CONTAINER:3000/health" >/dev/null 2>&1; then
+                DEPLOY_STATUS="SUCCESS"
+              else
+                DEPLOY_STATUS="UNHEALTHY"
+              fi
+            else
+              DEPLOY_STATUS="CONTAINER_MISSING"
+            fi
+
+            echo "[DEPLOY] state=$DEPLOY_STATUS slot=$ACTIVE_SLOT container=$ACTIVE_CONTAINER sha=${{ github.sha }}"
+
+  # ---------------------------------------------------------------------------
+  # JOB: api-health-gate  (Step E+)
+  #
+  # Validates the API container is healthy after deploy.
+  # Ensures /health returns 200 before proceeding to smoke tests.
+  # If the API is not healthy at this point, rollback is triggered.
+  # ---------------------------------------------------------------------------
+  api-health-gate:
+    name: API Health Gate
+    runs-on: ubuntu-latest
+    needs: [deploy]
+    timeout-minutes: 5
+    steps:
+      - name: Verify API container is healthy after deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: ${{ secrets.DO_USER }}
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
+            export INFRA_ROOT="${INFRA_ROOT:-/opt/infra}"
+            [ -d "$DEPLOY_ROOT" ] || { echo "::error::DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
+            cd "$DEPLOY_ROOT"
+
+            ACTIVE_SLOT=$(cat "$DEPLOY_ROOT/.fieldtrack/active-slot" 2>/dev/null || cat /var/lib/fieldtrack/active-slot 2>/dev/null || echo "blue")
+            ACTIVE_CONTAINER="api-$ACTIVE_SLOT"
+
+            docker inspect "$ACTIVE_CONTAINER" >/dev/null 2>&1 || {
+              echo "::error::Container $ACTIVE_CONTAINER not found"
+              exit 1
+            }
+
+            FT_CURL_IMG="curlimages/curl:8.7.1"
+            for i in $(seq 1 15); do
+              STATUS=$(docker run --rm --network api_network "$FT_CURL_IMG" \
+                -s -o /dev/null -w "%{http_code}" \
+                "http://$ACTIVE_CONTAINER:3000/health" 2>/dev/null || echo "000")
+              if [ "$STATUS" = "200" ]; then
+                echo "[DEPLOY] API healthy (slot=$ACTIVE_SLOT attempt=$i)"
+                exit 0
+              fi
+              sleep 2
+            done
+
+            echo "::error::API /health did not return 200 after 30s"
+            docker logs "$ACTIVE_CONTAINER" --tail 30 >&2 2>/dev/null || true
+            exit 1
+
+  # ---------------------------------------------------------------------------
+  # JOB: health-and-smoke
+  #
+  # Post-deploy health verification and CI coupling guard.
+  # Failure here triggers the rollback job automatically.
+  # ---------------------------------------------------------------------------
+  health-and-smoke:
+    name: Health Checks & Smoke Tests
+    runs-on: ubuntu-latest
+    needs: [api-health-gate, build-push]
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.build-push.outputs.deploy_sha }}
+
+      - name: CI guard — deploy.sh must not reference /ready or monitoring stack
+        run: |
+          set -euo pipefail
+          echo "Checking deploy.sh for forbidden references..."
+          # Exclude comment lines (starting with optional whitespace then #)
+          if grep -E "(/ready)" scripts/deploy.sh | grep -Ev '^\s*#'; then
+            echo "::error::deploy.sh references /ready — deploy gate must only use /health"
+            exit 1
+          fi
+          if grep -E "(prometheus|grafana|alertmanager|loki)" scripts/deploy.sh | grep -Ev '^\s*#'; then
+            echo "::error::deploy.sh references monitoring stack — deploy must be monitoring-independent"
+            exit 1
+          fi
+          # Check for local repo-relative infra path coupling in scripts/src only.
+          # Uses the same pattern as verify-stabilization.sh: only relative paths
+          # (./infra/ or ../infra/) are forbidden. Absolute /opt/infra is allowed.
+          # Scope: scripts/ and src/ only (not workflows where guard steps live).
+          if grep -rE "\./infra/|\.\./infra/" scripts/ src/ \
+               --binary-files=without-match --exclude-dir=node_modules \
+               --exclude=verify-stabilization.sh 2>/dev/null \
+               | grep -Ev '^[^:]+:\s*(#|//)'; then
+            echo "::error::Local repo-relative infra coupling (./infra/ or ../infra/) detected in scripts/ or src/"
+            exit 1
+          fi
+          echo "✓ CI guards passed: no /ready, no monitoring, no local infra coupling in deploy path"
+
+      - name: Wait for /health endpoint (via VPS)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: ${{ secrets.DO_USER }}
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
+            export INFRA_ROOT="${INFRA_ROOT:-/opt/infra}"
+            [ -d "$DEPLOY_ROOT" ] || { echo "::error::DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
+            cd "$DEPLOY_ROOT"
+            API_BASE_URL=$(grep -E '^API_BASE_URL=' .env 2>/dev/null | head -1 | cut -d'=' -f2- || true)
+            [ -n "$API_BASE_URL" ] || { echo "::error::API_BASE_URL missing or empty in .env"; exit 1; }
+            API_HOSTNAME=$(echo "$API_BASE_URL" | sed -E 's|^https?://||' | cut -d'/' -f1)
+            for i in $(seq 1 30); do
+              # Phase 1: in-network (source of truth)
+              if docker run --rm --network api_network \
+                curlimages/curl:8.7.1 -sk --max-time 5 \
+                -H "Host: ${API_HOSTNAME}" \
+                https://nginx/health 2>/dev/null \
+                | grep -q '"status":"ok"'; then
+                echo "[DEPLOY] /health OK (in-network, attempt $i)"
+                exit 0
+              fi
+              # Phase 2: HTTPS advisory (status=000 = host→Docker TCP issue, non-fatal)
+              STATUS=$(curl -s --resolve "${API_HOSTNAME}:443:127.0.0.1" \
+                -o /dev/null -w "%{http_code}" \
+                "https://${API_HOSTNAME}/health" --insecure 2>/dev/null || echo "000")
+              if [ "$STATUS" = "200" ]; then
+                echo "[DEPLOY] /health OK (HTTPS advisory, attempt $i)"
+                exit 0
+              fi
+              sleep 2
+            done
+            echo "::error::Health check failed after 30 attempts"
+            exit 1
+
+      - name: Wait for /health endpoint (final public check)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: ${{ secrets.DO_USER }}
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
+            export INFRA_ROOT="${INFRA_ROOT:-/opt/infra}"
+            [ -d "$DEPLOY_ROOT" ] || { echo "::error::DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
+            cd "$DEPLOY_ROOT"
+            API_BASE_URL=$(grep -E '^API_BASE_URL=' .env 2>/dev/null | head -1 | cut -d'=' -f2- || true)
+            [ -n "$API_BASE_URL" ] || { echo "::error::API_BASE_URL missing or empty in .env"; exit 1; }
+            API_HOSTNAME=$(echo "$API_BASE_URL" | sed -E 's|^https?://||' | cut -d'/' -f1)
+            for i in $(seq 1 10); do
+              # Phase 1: in-network (source of truth)
+              if docker run --rm --network api_network \
+                curlimages/curl:8.7.1 -sk --max-time 5 \
+                -H "Host: ${API_HOSTNAME}" \
+                https://nginx/health 2>/dev/null \
+                | grep -q '"status":"ok"'; then
+                echo "[DEPLOY] /health OK (in-network, attempt $i)"
+                exit 0
+              fi
+              # Phase 2: HTTPS advisory
+              STATUS=$(curl -s --resolve "${API_HOSTNAME}:443:127.0.0.1" \
+                -o /dev/null -w "%{http_code}" \
+                "https://${API_HOSTNAME}/health" --insecure 2>/dev/null || echo "000")
+              if [ "$STATUS" = "200" ]; then
+                echo "[DEPLOY] /health OK (HTTPS advisory, attempt $i)"
+                exit 0
+              fi
+              sleep 2
+            done
+            echo "::error::Final health check failed after 10 attempts"
+            exit 1
+
+      # Post-deploy /ready check — informational only, never fails the deploy.
+      # /health is the deploy gate (shallow, network-independent).
+      # /ready reflects deep system state: Redis, workers, DB connectivity.
+      # Logged in the job summary for operator visibility without blocking production.
+      - name: Post-deploy /ready check (informational)
+        continue-on-error: true
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: ${{ secrets.DO_USER }}
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
+            export INFRA_ROOT="${INFRA_ROOT:-/opt/infra}"
+            ACTIVE_SLOT=$(cat "$DEPLOY_ROOT/.fieldtrack/active-slot" 2>/dev/null || cat /var/lib/fieldtrack/active-slot 2>/dev/null || echo "unknown")
+            ACTIVE_CONTAINER="api-${ACTIVE_SLOT}"
+            FT_CURL_IMG="curlimages/curl:8.7.1"
+            READY_RESP=$(docker run --rm --network api_network "$FT_CURL_IMG" \
+              -sf --max-time 10 "http://$ACTIVE_CONTAINER:3000/ready" 2>/dev/null || echo "UNREACHABLE")
+            READY_STATUS=$(echo "$READY_RESP" | grep -o '"status":"[^"]*"' | head -1 || echo "unknown")
+            echo "[DEPLOY] /ready check: slot=$ACTIVE_SLOT status=$READY_STATUS"
+            echo "[DEPLOY] /ready response: $READY_RESP"
+
+      - name: Deployment summary
+        run: |
+          DEPLOY_SHA="${{ needs.build-push.outputs.deploy_sha }}"
+          {
+            echo "## Deployment Complete"
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Status | ✅ SUCCESS |"
+            echo "| Deploy SHA | \`${DEPLOY_SHA}\` |"
+            echo "| Health gate | /health → 200 |"
+            echo "| Post-deploy checks | passed |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "[DEPLOY] Production deployment complete — SHA=${DEPLOY_SHA} Health=OK"
+
+  # ---------------------------------------------------------------------------
+  # JOB: rollback
+  #
+  # Triggered automatically when POST-DEPLOY health checks fail.
+  #
+  # PHASE-AWARE CONDITION (prevents double-rollback):
+  #   Rollback triggers ONLY when the deploy job itself SUCCEEDED (exit 0)
+  #   AND a post-deploy CI health check subsequently failed.
+  #
+  #   This means nginx traffic was already switched to the new container
+  #   (deploy.sh reported DEPLOY_RESULT=SWITCHED) and then the CI-level
+  #   health gate caught a regression.
+  #
+  #   It does NOT trigger when:
+  #     • vps-readiness-check fails (deploy never started)
+  #     • deploy job fails (deploy.sh already handled internal recovery;
+  #       see DEPLOY_RESULT=FAILED_PRE_SWITCH or RESTORED in deploy.sh)
+  #
+  # 'if: always()' ensures this job evaluates even if upstream jobs failed.
+  # ---------------------------------------------------------------------------
+  rollback:
+    name: Rollback Deployment (auto)
+    runs-on: ubuntu-latest
+    needs: [vps-readiness-check, deploy, api-health-gate, health-and-smoke]
+    timeout-minutes: 10
+    if: |
+      always() &&
+      (
+        needs.api-health-gate.result == 'failure' ||
+        needs.health-and-smoke.result == 'failure'
+      )
+    steps:
+      - name: Log rollback trigger
+        run: |
+          echo "::error::Rollback triggered (post-switch health failure) — deploy_sha=${{ needs.build-push.outputs.deploy_sha }}"
+          [ "${{ needs.api-health-gate.result }}" = "failure" ] && echo "  [ERROR] failed job: api-health-gate" || true
+          [ "${{ needs.health-and-smoke.result }}" = "failure" ] && echo "  [ERROR] failed job: health-and-smoke" || true
+
+      - name: Rollback on VPS
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: ${{ secrets.DO_USER }}
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
+            export INFRA_ROOT="${INFRA_ROOT:-/opt/infra}"
+            [ -d "$DEPLOY_ROOT" ] || { echo "::error::DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
+            cd "$DEPLOY_ROOT"
+            chmod +x scripts/*.sh
+            ./scripts/deploy.sh --rollback --auto
+
+            ACTIVE_SLOT=$(cat "$DEPLOY_ROOT/.fieldtrack/active-slot" 2>/dev/null || cat /var/lib/fieldtrack/active-slot 2>/dev/null || echo "unknown")
+            echo "[DEPLOY] Rollback complete — slot=$ACTIVE_SLOT sha=${{ github.sha }}"

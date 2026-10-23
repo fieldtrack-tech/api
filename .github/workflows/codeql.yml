@@ -1,0 +1,64 @@
+﻿name: "CodeQL ΓÇö PR Scan (lightweight)"
+# Runs on every PR to master.  Fast feedback: security-extended queries only.
+# The deep security-and-quality scan runs separately in codeql-deep.yml after
+# a merge lands on master and does NOT block this pipeline.
+
+on:
+  pull_request:
+    branches: ["master"]
+
+# Cancel in-flight scans for the same PR when new commits are pushed.
+concurrency:
+  group: codeql-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+jobs:
+  # Job name MUST stay "codeql-lite" ΓÇö branch protection references this exact
+  # status check: "CodeQL ΓÇö PR Scan (lightweight) / codeql-lite"
+  codeql-lite:
+    name: CodeQL Lite (PR)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ["javascript"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js (match production)
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Build so CodeQL can trace data flows through compiled output.
+      - name: Build API
+        run: npm run build || true
+
+      # Initialize AFTER install + build so the database includes all sources.
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          # security-extended: broader than the default security set but
+          # significantly faster than security-and-quality (no style/quality rules).
+          # Catches OWASP Top-10 class issues without slowing PR feedback.
+          queries: security-extended
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "codeql-lite"
