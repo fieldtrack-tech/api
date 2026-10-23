@@ -1,4 +1,4 @@
-﻿name: Auto PR (beta ΓåÆ master)
+name: Auto PR (beta → master)
 # Creates or updates the release PR from beta to master.
 # Enables auto-merge so GitHub merges the PR when all checks pass.
 
@@ -70,13 +70,13 @@ jobs:
           GH_TOKEN: ${{ secrets.FIELDTRACK_PAT }}
         run: |
           {
-            echo "## ≡ƒÜÇ Automated Release PR"
+            echo "## 🚀 Automated Release PR"
             echo ""
             echo "This PR contains all changes from beta to master."
             echo ""
             echo "---"
             echo ""
-            echo "## ≡ƒôª Latest Changes"
+            echo "## 📦 Latest Changes"
             echo ""
             echo "<!-- AUTO-GENERATED:START -->"
             cat commits.txt
@@ -84,7 +84,7 @@ jobs:
             echo ""
             echo "---"
             echo ""
-            echo "## ≡ƒºá Notes"
+            echo "## 🧠 Notes"
             echo "- Auto-managed PR"
             echo "- Do not edit manually"
           } > body.txt
@@ -92,10 +92,10 @@ jobs:
           gh pr create \
             --base master \
             --head beta \
-            --title "≡ƒÜÇ Release: beta ΓåÆ master" \
+            --title "🚀 Release: beta → master" \
             --body-file body.txt
 
-          echo "Γ£ô PR created"
+          echo "✓ PR created"
 
       - name: Update PR body
         if: steps.pr.outputs.pr_number != '' && steps.summary.outputs.empty != 'true'
@@ -116,7 +116,7 @@ jobs:
 
           if ! diff -q old_body.txt final_body.txt > /dev/null 2>&1; then
             gh pr edit "$PR" --body-file final_body.txt
-            echo "Γ£ô PR #$PR body updated"
+            echo "✓ PR #$PR body updated"
           else
             echo "No changes in PR body"
           fi
@@ -133,7 +133,7 @@ jobs:
             --jq '.[0].number // ""')
 
           if [ -z "$PR" ]; then
-            echo "ΓÜá∩╕Å  No PR found, auto-merge not enabled"
+            echo "⚠️  No PR found, auto-merge not enabled"
             exit 0
           fi
 
@@ -144,4 +144,4 @@ jobs:
             --squash \
             --delete-branch=false || true
 
-          echo "Γ£ô Auto-merge enabled"
+          echo "✓ Auto-merge enabled"

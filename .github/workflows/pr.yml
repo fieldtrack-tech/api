@@ -1,4 +1,4 @@
-﻿name: PR Validation
+name: PR Validation
 
 on:
   pull_request:
@@ -47,7 +47,7 @@ jobs:
     timeout-minutes: 15
     if: always()
     env:
-      # ΓöÇΓöÇ CI non-secret defaults ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+      # ── CI non-secret defaults ─────────────────────────────────────────────────
       CONFIG_VERSION: "1"
       APP_ENV: ci
       NODE_ENV: production
@@ -71,7 +71,7 @@ jobs:
       WEBHOOK_DLQ_MAX_SIZE: "10000"
       WEBHOOK_DLQ_RETENTION_DAYS: "30"
       WEBHOOK_MAX_PAYLOAD_BYTES: "262144"
-      # ΓöÇΓöÇ Supabase ΓÇö GitHub Secrets only ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+      # ── Supabase — GitHub Secrets only ─────────────────────────────────────────
       SUPABASE_URL: ${{ secrets.SUPABASE_URL_TEST }}
       SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY_TEST }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_TEST }}
@@ -79,14 +79,14 @@ jobs:
       - name: Abort if change detection failed
         if: needs.detect-changes.result != 'success'
         run: |
-          echo "Γ¥î Change detection did not succeed (result: ${{ needs.detect-changes.result }}) ΓÇö cannot safely skip checks"
+          echo "❌ Change detection did not succeed (result: ${{ needs.detect-changes.result }}) — cannot safely skip checks"
           exit 1
 
       - name: Skip if no API changes
         if: needs.detect-changes.outputs.api != 'true'
         run: |
-          echo "No API changes ΓÇö skipping all API validation"
-          echo "Γ£ô API CI (skipped)"
+          echo "No API changes — skipping all API validation"
+          echo "✓ API CI (skipped)"
           exit 0
 
       - uses: actions/checkout@v5
@@ -112,11 +112,11 @@ jobs:
         run: |
           if grep -r --include="*.ts" "process\.env" src/ \
                | grep -v "src/config/env\.ts"; then
-            echo "Γ¥î Direct process.env access detected outside env.ts"
+            echo "❌ Direct process.env access detected outside env.ts"
             echo "   Use: import { env } from './config/env.js' instead"
             exit 1
           fi
-          echo "Γ£à Env contract clean ΓÇö no direct process.env access outside env.ts"
+          echo "✅ Env contract clean — no direct process.env access outside env.ts"
       - name: Infra contract naming guard
         if: needs.detect-changes.outputs.api == 'true'
         run: |
@@ -127,7 +127,7 @@ jobs:
           if grep -rE '\bfieldtrack_network\b' src/ scripts/ \
                --include='*.ts' --include='*.sh' \
                2>/dev/null | grep -Ev '^[^:]+:\s*(#|//)'; then
-            echo "::error::Forbidden network name 'fieldtrack_network' ΓÇö canonical name is 'api_network'"
+            echo "::error::Forbidden network name 'fieldtrack_network' — canonical name is 'api_network'"
             FAIL=1
           fi
 
@@ -142,28 +142,28 @@ jobs:
                --exclude='*.unit.ts' \
                --exclude='.env.example.dev' \
                2>/dev/null | grep -Fv 'env-setup.ts' | grep -q .; then
-            echo "::error::localhost Redis URL in production paths ΓÇö canonical URL is redis://redis:6379"
+            echo "::error::localhost Redis URL in production paths — canonical URL is redis://redis:6379"
             FAIL=1
           fi
 
           [ "$FAIL" -eq 0 ] || exit 1
-          echo "Γ£à Infra contract naming guard passed"
+          echo "✅ Infra contract naming guard passed"
       - name: Dependency vulnerability scan (production deps)
         if: needs.detect-changes.outputs.api == 'true'
         run: |
           # CRITICAL: Verify @fastify/jwt is NOT in production bundle
           # @fastify/jwt (with fast-jwt CVE-2023-48223) is dev-only for tests
           if npm ls @fastify/jwt --prod 2>&1 | grep -q '@fastify/jwt'; then
-            echo "Γ¥î FATAL: @fastify/jwt found in production dependencies"
+            echo "❌ FATAL: @fastify/jwt found in production dependencies"
             exit 1
           fi
-          echo "Γ£à Production boundary verified: @fastify/jwt is not in prod"
+          echo "✅ Production boundary verified: @fastify/jwt is not in prod"
           
           # Audit only for CRITICAL severity in production dependencies
           # Fast-jwt CVE is in dev-only @fastify/jwt (test server only)
           # Production uses jsonwebtoken + JWKS (ES256 enforced, not vulnerable)
-          npm audit --omit=dev --audit-level=critical || echo "ΓÜá∩╕Å Known CVE-2023-48223 (fast-jwt, test-only, mitigated by architecture)"
-          echo "Γ£à Audit check complete"
+          npm audit --omit=dev --audit-level=critical || echo "⚠️ Known CVE-2023-48223 (fast-jwt, test-only, mitigated by architecture)"
+          echo "✅ Audit check complete"
       - name: Tests (unit + integration)
         if: needs.detect-changes.outputs.api == 'true'
         run: npm test
@@ -187,7 +187,7 @@ jobs:
             -f Dockerfile \
             .
 
-      - name: Guard ΓÇö no in-container curl via docker exec
+      - name: Guard — no in-container curl via docker exec
         if: needs.detect-changes.outputs.api == 'true'
         run: |
           # Invoking curl inside a running API container (docker's exec + curl) is forbidden because:
@@ -209,7 +209,7 @@ jobs:
             echo "$MATCHES"
             exit 1
           fi
-          echo "Γ£ô No forbidden in-container curl via exec in deploy paths"
+          echo "✓ No forbidden in-container curl via exec in deploy paths"
 
       - name: Pull curl image
         if: needs.detect-changes.outputs.api == 'true'
@@ -218,7 +218,7 @@ jobs:
       - name: Container bootstrap validation
         if: needs.detect-changes.outputs.api == 'true'
         run: |
-          # NO host port bindings ΓÇö container runs on an isolated Docker bridge
+          # NO host port bindings — container runs on an isolated Docker bridge
           # network. All health checks and smoke tests run from an external
           # curlimages/curl container on the same network (ci_api_net), matching
           # production pattern (api_network / Docker DNS). The API image does NOT
@@ -263,12 +263,12 @@ jobs:
 
           # Fail fast if container exited immediately
           docker ps | grep api-ci-test || {
-            echo "Γ¥î Container failed to start"
+            echo "❌ Container failed to start"
             docker logs api-ci-test
             exit 1
           }
 
-          # External health probe ΓÇö curlimages/curl on ci_api_net, no container tooling assumed
+          # External health probe — curlimages/curl on ci_api_net, no container tooling assumed
           STATUS="000"
           for i in $(seq 1 12); do
             STATUS=$(docker run --rm \
@@ -277,24 +277,24 @@ jobs:
               -s -o /dev/null -w "%{http_code}" \
               http://api-ci-test:3000/health || echo "000")
             if [ "$STATUS" = "200" ]; then break; fi
-            echo "Health check attempt $i: HTTP $STATUS ΓÇö waiting..."
+            echo "Health check attempt $i: HTTP $STATUS — waiting..."
             sleep 2
           done
 
           if [ "$STATUS" != "200" ]; then
-            echo "Γ¥î /health returned HTTP $STATUS after 24 s (expected 200)"
+            echo "❌ /health returned HTTP $STATUS after 24 s (expected 200)"
             echo "Container logs (last 50 lines):"
             docker logs api-ci-test --tail 50
             exit 1
           fi
 
-          echo "Γ£ô /health returned 200"
+          echo "✓ /health returned 200"
 
           # Same binary + script path as Docker HEALTHCHECK (exec form); catches ESM/require
           # regressions and confirms 127.0.0.1:3000/health from inside the container.
           echo "Validating /app/healthcheck.js (ESM, distroless node)..."
           docker exec api-ci-test /nodejs/bin/node /app/healthcheck.js
-          echo "Γ£ô healthcheck.js exited 0"
+          echo "✓ healthcheck.js exited 0"
 
           # Smoke tests: admin endpoints must reject unauthenticated requests with 401
           for ENDPOINT in /admin/audit-log /admin/webhook-dlq; do
@@ -304,12 +304,12 @@ jobs:
               -s -o /dev/null -w "%{http_code}" \
               "http://api-ci-test:3000${ENDPOINT}" || echo "000")
             if [ "$ECODE" != "401" ]; then
-              echo "Γ¥î ${ENDPOINT} expected 401 (unauthenticated), got ${ECODE}"
+              echo "❌ ${ENDPOINT} expected 401 (unauthenticated), got ${ECODE}"
               echo "Container logs (last 50 lines):"
               docker logs api-ci-test --tail 50
               exit 1
             fi
-            echo "Γ£ô ${ENDPOINT} ΓåÆ 401 (auth guard verified)"
+            echo "✓ ${ENDPOINT} → 401 (auth guard verified)"
           done
 
           # Drop container + network before rmi (trap runs only after this script finishes).
@@ -319,7 +319,7 @@ jobs:
   # ---------------------------------------------------------------------------
   # JOB: codeql-lite
   #
-  # Lightweight CodeQL security scan ΓÇö runs in PARALLEL with api-ci.
+  # Lightweight CodeQL security scan — runs in PARALLEL with api-ci.
   # Uses security-extended queries (OWASP Top-10 class) for fast PR feedback.
   # This job is REQUIRED in branch protection; PRs cannot merge until it passes.
   #
@@ -370,11 +370,11 @@ jobs:
   # JOB: production-simulation
   #
   # Validates the image behaves correctly under production-like conditions:
-  #   - Real Docker bridge network (api_network) ΓÇö same as production
+  #   - Real Docker bridge network (api_network) — same as production
   #   - Redis container on the same network (same container DNS path)
   #   - WORKERS_ENABLED=true (workers active, unlike CI test job)
   #   - All probes use an EXTERNAL curlimages/curl container via Docker DNS
-  #     (no host port bindings, no docker exec ΓÇö mirrors nginxΓåÆapi path)
+  #     (no host port bindings, no docker exec — mirrors nginx→api path)
   #
   # Also captures the image digest for parity verification during deploy
   # (deploy.yml's build-scan-push compares against this artifact).
@@ -392,14 +392,14 @@ jobs:
       APP_ENV: production
       NODE_ENV: production
       PORT: "3000"
-      # Use placeholder URLs ΓÇö real Supabase secrets injected below.
+      # Use placeholder URLs — real Supabase secrets injected below.
       # APP_BASE_URL / API_BASE_URL are intentionally non-localhost to match
       # what a production container would see (workers read these for callbacks).
       APP_BASE_URL: https://api.example.com
       API_BASE_URL: https://api.example.com
       FRONTEND_BASE_URL: https://app.example.com
       CORS_ORIGIN: https://app.example.com
-      # Redis runs as a container named "redis" on api_network ΓÇö same DNS name
+      # Redis runs as a container named "redis" on api_network — same DNS name
       # as production. Workers will connect; Redis unavailability is non-fatal
       # (graceful degradation is verified, not crash-on-missing-redis).
       REDIS_URL: redis://redis:6379
@@ -424,8 +424,8 @@ jobs:
       - name: Skip if no API changes
         if: needs.detect-changes.outputs.api != 'true'
         run: |
-          echo "No API changes ΓÇö skipping production simulation"
-          echo "Γ£ô Production Simulation (skipped ΓÇö no relevant changes)"
+          echo "No API changes — skipping production simulation"
+          echo "✓ Production Simulation (skipped — no relevant changes)"
 
       - uses: actions/checkout@v5
         if: needs.detect-changes.outputs.api == 'true'
@@ -477,7 +477,7 @@ jobs:
       - name: Start API (workers enabled, api_network, no host ports)
         if: needs.detect-changes.outputs.api == 'true'
         run: |
-          # NO -p flags ΓÇö all comms via api_network Docker DNS, same as production.
+          # NO -p flags — all comms via api_network Docker DNS, same as production.
           docker run -d \
             --name api-blue \
             --network api_network \
@@ -525,10 +525,10 @@ jobs:
             exit 1
           }
 
-          # External health probe ΓÇö curlimages/curl on api_network.
+          # External health probe — curlimages/curl on api_network.
           # This is the same network path nginx uses in production:
-          #   nginx ΓåÆ api_network ΓåÆ api-blue:3000
-          # No host port, no docker exec ΓÇö container tooling not assumed.
+          #   nginx → api_network → api-blue:3000
+          # No host port, no docker exec — container tooling not assumed.
           STATUS="000"
           for i in $(seq 1 15); do
             STATUS=$(docker run --rm \
@@ -537,10 +537,10 @@ jobs:
               -s -o /dev/null -w "%{http_code}" \
               "http://api-blue:3000/health" 2>/dev/null || echo "000")
             if [ "$STATUS" = "200" ]; then
-              echo "Γ£ô /health ΓåÆ 200 (attempt $i, container DNS, api_network)"
+              echo "✓ /health → 200 (attempt $i, container DNS, api_network)"
               break
             fi
-            echo "Attempt $i: HTTP $STATUS ΓÇö waiting..."
+            echo "Attempt $i: HTTP $STATUS — waiting..."
             sleep 2
           done
 
@@ -552,7 +552,7 @@ jobs:
 
           echo "Validating /app/healthcheck.js (same as Docker HEALTHCHECK)..."
           docker exec api-blue /nodejs/bin/node /app/healthcheck.js
-          echo "Γ£ô healthcheck.js exited 0"
+          echo "✓ healthcheck.js exited 0"
 
           # Smoke: auth guards must reject unauthenticated requests with 401.
           for ENDPOINT in /admin/audit-log /admin/webhook-dlq; do
@@ -566,10 +566,10 @@ jobs:
               docker logs api-blue --tail 50
               exit 1
             fi
-            echo "Γ£ô ${ENDPOINT} ΓåÆ 401 (auth guard verified via container DNS)"
+            echo "✓ ${ENDPOINT} → 401 (auth guard verified via container DNS)"
           done
 
-          echo "Γ£ô Production simulation passed (workers enabled, Redis connected, container DNS routing)"
+          echo "✓ Production simulation passed (workers enabled, Redis connected, container DNS routing)"
 
       - name: Capture image digest for parity check
         id: sim-digest

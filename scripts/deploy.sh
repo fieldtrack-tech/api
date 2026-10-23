@@ -187,6 +187,28 @@ _ft_snapshot() {
     if [ "${DEBUG:-false}" = "true" ]; then set -x; fi
 }
 
+# ---------------------------------------------------------------------------
+# GITHUB ACTIONS SUMMARY (optional; unset outside GitHub Actions — must not trip set -u)
+# ---------------------------------------------------------------------------
+_ft_github_summary() {
+    local status="$1" container="${2:-unknown}" image="${3:-unknown}" reason="${4:-}"
+    if [ -z "${GITHUB_STEP_SUMMARY:-}" ]; then
+        return 0
+    fi
+    {
+        echo "### 🚀 Deployment Summary"
+        echo "| Field | Value |"
+        echo "|-------|-------|"
+        echo "| Status | **$status** |"
+        echo "| Deploy ID | \`$DEPLOY_ID\` |"
+        echo "| Duration | $(($(date +%s) - START_TS))s |"
+        echo "| Active Container | \`$container\` |"
+        echo "| Image SHA | \`${image:0:12}...\` |"
+        [ -n "$reason" ] && echo "| Reason | $reason |"
+        echo "| Timestamp | $(date -u +'%Y-%m-%d %H:%M:%S UTC') |"
+    } >> "$GITHUB_STEP_SUMMARY"
+}
+
 _ft_final_state() {
     local active_container="$1" image_sha="$2" nginx_upstream
     nginx_upstream=$(grep -oE 'http://(api-blue|api-green):3000' "$NGINX_CONF" 2>/dev/null \
@@ -666,6 +688,7 @@ idempotency_check() {
         if echo "$health" | grep -q '"status":"ok"' 2>/dev/null; then
             _ft_log "msg='target SHA already running and healthy — nothing to do' container=$ACTIVE_NAME"
             _ft_final_state "$ACTIVE_NAME" "$IMAGE_SHA"
+            _ft_github_summary "✅ IDEMPOTENT (no change)" "$ACTIVE_NAME" "$IMAGE_SHA" "SHA already deployed"
             _ft_exit 0 "DEPLOY_SUCCESS" "reason=idempotent_noop sha=$IMAGE_SHA"
         fi
         _ft_log "msg='SHA matches but container not healthy — proceeding' container=$ACTIVE_NAME"
@@ -1169,6 +1192,7 @@ success() {
         | xargs -r docker rm -f 2>/dev/null || true
 
     _ft_final_state "$INACTIVE_NAME" "$IMAGE_SHA"
+    _ft_github_summary "✅ SUCCESS" "$INACTIVE_NAME" "$IMAGE_SHA"
 }
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-﻿name: Sync beta ΓåÉ master
+name: Sync beta ← master
 
 on:
   workflow_run:
@@ -43,7 +43,7 @@ jobs:
         run: |
           git checkout -B beta origin/master
           git push origin beta --force
-          echo "Γ£ô beta synced"
+          echo "✓ beta synced"
 
       - name: Verify
         run: |

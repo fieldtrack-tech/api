@@ -1,6 +1,6 @@
-﻿name: "CodeQL ΓÇö Deep Scan (post-merge)"
+name: "CodeQL — Deep Scan (post-merge)"
 # Runs after every merge to master AND on a weekly schedule.
-# Uses the full security-and-quality query suite ΓÇö significantly more thorough
+# Uses the full security-and-quality query suite — significantly more thorough
 # than the PR lightweight scan.
 #
 # DOES NOT block the Deploy pipeline.  Both workflows trigger independently on
@@ -15,10 +15,10 @@ on:
   push:
     branches: ["master"]
   schedule:
-    # Every Monday at 03:15 UTC ΓÇö offset from midnight to avoid GHA congestion.
+    # Every Monday at 03:15 UTC — offset from midnight to avoid GHA congestion.
     - cron: "15 3 * * 1"
 
-# Do not cancel in-progress deep scans ΓÇö let them complete for full coverage.
+# Do not cancel in-progress deep scans — let them complete for full coverage.
 concurrency:
   group: codeql-deep-${{ github.ref }}
   cancel-in-progress: false
@@ -29,9 +29,9 @@ permissions:
   security-events: write
 
 jobs:
-  # Job name MUST stay "codeql-deep" ΓÇö deploy.yml polls for this exact status
+  # Job name MUST stay "codeql-deep" — deploy.yml polls for this exact status
   # check, and branch protection on master references it as:
-  # "CodeQL ΓÇö Deep Scan (post-merge) / codeql-deep"
+  # "CodeQL — Deep Scan (post-merge) / codeql-deep"
   codeql-deep:
     name: Deep Analyze (CodeQL)
     runs-on: ubuntu-latest

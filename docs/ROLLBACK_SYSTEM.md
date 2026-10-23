@@ -18,11 +18,11 @@ The rollback system provides instant production recovery by redeploying previous
 │                    Deployment Flow                          │
 └─────────────────────────────────────────────────────────────┘
 
-1. Build and publish image → ghcr.io/fieldtrack-tech/api:a4f91c2
+1. CI builds image → ghcr.io/fieldtrack-tech/api:a4f91c2
 2. Deploy script pulls image and performs blue-green deployment
 3. After successful deployment → prepends "a4f91c2" to .deploy_history
 4. History maintains last 5 deployments
-5. If deployment fails → run `deploy.sh --rollback --auto`
+5. If deployment fails → `deploy.sh --rollback --auto` is triggered by CI
 6. Rollback redeploys previous image using `deploy.sh <sha>`
 ```
 
@@ -58,7 +58,7 @@ The history is maintained using a rolling window:
 
 ### Normal Deployment
 
-Deploy a published image by SHA:
+Deploy the latest image from CI:
 
 ```bash
 cd "$HOME/api"
@@ -172,9 +172,21 @@ sudo systemctl reload nginx # Reload only if valid
 # Prepends SHA to .deploy_history (rolling last 5)
 ```
 
-## Deployment History
+## Integration with CI/CD
 
-Every successful manual deployment updates `.deploy_history`:
+### GitHub Actions Workflow
+
+```yaml
+- name: Deploy to VPS
+  run: |
+    ssh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+      "cd \"$HOME/api\" && \
+       ./scripts/deploy.sh ${{ env.SHA_SHORT }}"
+```
+
+### Deployment History
+
+Every CI deployment automatically updates `.deploy_history`:
 
 ```
 Commit a4f91c2 → Deploy → .deploy_history = ["a4f91c2"]
@@ -260,3 +272,4 @@ Potential improvements (not currently implemented):
 ## Related Documentation
 
 - [Blue-Green Deployment](./DEPLOYMENT.md)
+- [CI/CD Pipeline](.github/workflows/deploy.yml)

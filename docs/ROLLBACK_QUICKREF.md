@@ -36,7 +36,7 @@ cd "$HOME/api"
 
 ```
 ┌──────────────┐
-│  Build and   │
+│  CI builds   │
 │  image SHA   │
 └──────┬───────┘
        │

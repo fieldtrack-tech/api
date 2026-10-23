@@ -2,14 +2,23 @@
 
 This guide reflects the implemented production deployment flow for the API repository.
 
-## Deployment Flow
+## CI/CD Flow (GitHub Actions)
 
-Deployments are currently run manually with `scripts/deploy.sh`.
+Primary workflow: `.github/workflows/deploy.yml`
 
-1. Build and publish the target container image to GHCR.
-2. Run `./scripts/deploy.sh <sha>` on the VPS.
-3. Confirm the routed `/health` endpoint and smoke checks.
-4. Run `./scripts/deploy.sh --rollback --auto` if post-deploy validation fails.
+Pipeline behavior:
+
+1. `codeql-gate`
+   - deploy triggers from CodeQL deep-scan completion on `master`
+   - blocked if scan conclusion is not `success`
+2. `validate` + `test-api` + `infra-leakage-guard`
+3. `build-scan-push`
+   - Docker build
+   - image scanning
+   - push to GHCR
+4. readiness/deploy jobs execute VPS deployment using `scripts/deploy.sh`
+5. post-deploy health and smoke checks
+6. rollback path on deploy/smoke failure
 
 ## Docker Build and Runtime
 

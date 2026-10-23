@@ -31,5 +31,7 @@ docs
 # Infra, supabase and other repo artefacts
 infra
 supabase
+codeql-db
+results
 apps
 packages

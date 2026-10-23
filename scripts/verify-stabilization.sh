@@ -52,6 +52,13 @@ else
   pass "No local repo-relative infra coupling in scripts/ or src/"
 fi
 
+# Deploy workflow guard
+if grep -q "validate-env.sh\|load-env.sh\|smoke-test.sh\|monitoring-sync" "$REPO_ROOT/.github/workflows/deploy.yml"; then
+  fail "deploy.yml still references removed or infra-specific helpers"
+else
+  pass "deploy.yml has no removed/infra-specific helper references"
+fi
+
 echo ""
 echo "Passed: $TESTS_PASSED"
 echo "Failed: $TESTS_FAILED"

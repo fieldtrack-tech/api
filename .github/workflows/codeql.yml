@@ -1,4 +1,4 @@
-﻿name: "CodeQL ΓÇö PR Scan (lightweight)"
+name: "CodeQL — PR Scan (lightweight)"
 # Runs on every PR to master.  Fast feedback: security-extended queries only.
 # The deep security-and-quality scan runs separately in codeql-deep.yml after
 # a merge lands on master and does NOT block this pipeline.
@@ -18,8 +18,8 @@ permissions:
   security-events: write
 
 jobs:
-  # Job name MUST stay "codeql-lite" ΓÇö branch protection references this exact
-  # status check: "CodeQL ΓÇö PR Scan (lightweight) / codeql-lite"
+  # Job name MUST stay "codeql-lite" — branch protection references this exact
+  # status check: "CodeQL — PR Scan (lightweight) / codeql-lite"
   codeql-lite:
     name: CodeQL Lite (PR)
     runs-on: ubuntu-latest

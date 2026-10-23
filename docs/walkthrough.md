@@ -1194,7 +1194,7 @@ Phase 10 removes all blockers for multi-instance deployment:
 
 ---
 
-## Phase 11 — Deployment Hardening
+## Phase 11 — CI/CD Deployment Hardening
 
 ### Overview
 
@@ -1256,7 +1256,7 @@ The module-level `workerStarted` flag persists for the lifetime of the Node.js p
 
 **File:** `Dockerfile`
 
-Without a `HEALTHCHECK`, Docker and orchestrators (ECS, Kubernetes, Fly.io) cannot distinguish between a container that is starting up and one that has crashed silently. Rolling deployments have no signal to know when to shift traffic.
+Without a `HEALTHCHECK`, Docker and orchestrators (ECS, Kubernetes, Fly.io) cannot distinguish between a container that is starting up and one that has crashed silently. CI/CD pipelines that deploy via rolling update have no signal to know when to shift traffic.
 
 **Implementation:**
 
@@ -1284,7 +1284,7 @@ The probe hits `GET /health` which is the existing health route — no new endpo
 
 **File:** `src/server.ts`
 
-The deployment environment can provide `GITHUB_SHA` as an environment variable. Logging it at boot time creates an auditable record in structured logs:
+GitHub Actions injects `GITHUB_SHA` as an environment variable during workflow runs. Logging it at boot time creates an auditable record in structured logs:
 
 ```typescript
 app.log.info(
@@ -2237,11 +2237,51 @@ Added inline documentation explaining that `sequence_number` is intentionally nu
 
 ---
 
-## Post-Phase-18 — Manual Deployment & Multi-Version Rollback System
+## Post-Phase-18 — CI/CD Pipeline & Multi-Version Rollback System
 
 ### Overview
 
-The multi-version rollback system provides production recovery using immutable GHCR image tags. Deployments are run manually with the deployment script.
+Two operational hardening additions were layered on top of Phase 18:
+1. **Production-grade CI/CD pipeline** — tests block deployment; Docker builds are cached
+2. **Multi-version rollback system** — instant production recovery using immutable GHCR image tags
+
+---
+
+### CI/CD Pipeline
+
+**File:** `.github/workflows/deploy.yml`
+
+The pipeline is split into two jobs:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  trigger: push to master OR pull_request to master           │
+└─────────────────────────────────────────────────────────────┘
+         │
+         ▼
+┌────────────────────┐         ┌─────────────────────────────┐
+│  test (all events) │──pass──►│  build-and-deploy           │
+│                    │         │  (push to master only)      │
+│  1. npm ci         │         │                             │
+│  2. tsc --noEmit   │         │  1. docker/setup-buildx     │
+│  3. npm run test   │         │  2. docker/login (GHCR)     │
+└────────────────────┘         │  3. docker/build-push       │
+                               │     (GHA cache, 2 tags)     │
+                               │  4. SSH → VPS deploy script │
+                               └─────────────────────────────┘
+```
+
+**Key improvements over the original pipeline:**
+
+| Concern | Before | After |
+|---------|--------|-------|
+| Test gate | ❌ Deployed without testing | ✅ `needs: test` blocks deployment on failure |
+| Dependency install | `npm install` (non-deterministic) | `npm ci` (deterministic, lock file enforced) |
+| TypeScript check | ❌ Not run in CI | ✅ `npx tsc --noEmit` before tests |
+| Docker cache | ❌ Full rebuild every push | ✅ GitHub Actions cache (`type=gha`) — 80% faster |
+| Node cache | ❌ Fresh `node_modules` every run | ✅ `actions/setup-node` cache on `package-lock.json` |
+| PR validation | ❌ Only runs on push | ✅ `test` job runs on PRs too |
+| Image tags | Single `latest` | `latest` + 7-char SHA tag |
 
 ---
 
@@ -2289,6 +2329,7 @@ Any SHA from `.deploy_history` (or any valid GHCR tag) can be targeted directly.
 
 | File | Action |
 |------|--------|
+| `.github/workflows/deploy.yml` | **MODIFIED** — Split into `test` + `build-and-deploy` jobs; `npm ci`; `tsc --noEmit`; GHA cache |
 | `scripts/deploy.sh` | **MODIFIED** — Unified deploy + rollback, appends SHA to `.deploy_history`; maintains 5-entry window |
 | `.gitignore` | **MODIFIED** — `.deploy_history` excluded |
 | `docs/ROLLBACK_SYSTEM.md` | **NEW** — Architecture, usage, troubleshooting guide |
@@ -2300,6 +2341,10 @@ Any SHA from `.deploy_history` (or any valid GHCR tag) can be targeted directly.
 
 | Check | Result |
 |-------|--------|
+| `test` job runs on PRs | Branch protection gate active |
+| Deployment blocked on test failure | `needs: test` enforced |
+| `npm ci` used | Deterministic dependency install |
+| Docker layer cache | `cache-from/to: type=gha` in `docker/build-push-action` |
 | Rollback requires 2+ deployments | Script exits with error if history is insufficient |
 | Rollback time | < 10 s (image already in GHCR) |
 | SHA tag on each image | `ghcr.io/.../fieldtrack-api:<sha>` retained permanently |

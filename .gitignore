@@ -45,11 +45,6 @@ build/
 .next/
 out/
 
-# Locally generated analysis artifacts
-codeql-db/
-results/
-*.sarif
-
 # ----------------
 # Testing
 # ----------------
@@ -85,6 +80,13 @@ yarn-error.log*
 Thumbs.db
 ehthumbs.db
 desktop.ini
+
+# ----------------
+# CodeQL
+# ----------------
+codeql-db/
+results/
+*.sarif
 
 # ----------------
 # Supabase local dev

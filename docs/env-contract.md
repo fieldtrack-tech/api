@@ -48,7 +48,7 @@ Validated by `src/config/env.ts` (Zod schema, fail-fast).
 
 | Variable | Required in Prod | Type | Purpose |
 |----------|:---:|------|---------|
-| `API_BASE_URL` | ✅ | `https://…` URL | **The canonical public URL of this API.** Used in OpenAPI server definitions, server-generated links, deploy scripts, and health checks. |
+| `API_BASE_URL` | ✅ | `https://…` URL | **The canonical public URL of this API.** Used in OpenAPI server definitions and any server-generated links referencing the API itself. Also used by deploy scripts and CI health checks. |
 | `APP_BASE_URL` | ✅ | `https://…` URL | Canonical root URL for the whole application. Used in email footers, OpenGraph canonical tags, and generic redirects that don't need to distinguish API vs frontend. |
 | `FRONTEND_BASE_URL` | ✅ | `https://…` URL | Public URL of the web frontend (maintained in a separate repository: `fieldtrack-tech/web`). Used to build password-reset and invitation email links. |
 
@@ -99,7 +99,7 @@ Validated by `src/config/env.ts` (Zod schema, fail-fast).
 | `METRICS_SCRAPE_TOKEN` | ✅ | — | Bearer token Prometheus must present to scrape `/metrics`. Unset = open in dev/test. **Must** be set in production. |
 | `TEMPO_ENDPOINT` | — | `http://tempo:4318` | OTLP HTTP endpoint for Grafana Tempo traces. |
 | `SERVICE_NAME` | — | `fieldtrack-api` | OpenTelemetry service name label. |
-| `GITHUB_SHA` | — | `"manual"` | Git commit SHA, supplied by the deployment environment when available. |
+| `GITHUB_SHA` | — | `"manual"` | Git commit SHA. Auto-injected by GitHub Actions. |
 
 ### Limits
 
@@ -113,27 +113,29 @@ Validated by `src/config/env.ts` (Zod schema, fail-fast).
 | `WORKER_CONCURRENCY` | `1` | Distance worker job concurrency per replica. |
 | `ANALYTICS_WORKER_CONCURRENCY` | `5` | Analytics worker job concurrency (1–50). |
 
-### Test-only Flags (not in Zod schema)
+### CI-only Flags (not in Zod schema)
 
 | Variable | Purpose |
 |----------|---------|
-| `WORKERS_ENABLED` | Set to `"false"` in tests to disable BullMQ workers (Redis not required). Default `"true"` in production. |
+| `WORKERS_ENABLED` | Set to `"false"` in CI/test to disable BullMQ workers (Redis not required). Default `"true"` in production. |
+| `CI` | Auto-set by GitHub Actions. Used for logging only. |
 
 ---
 
-## Deployment Scripts
+## CI / Scripts — GitHub Actions + Shell Scripts
 
-Variables consumed by deployment scripts. Store them in the deployment environment.
+Variables consumed by deploy scripts and workflows.
+Stored as **GitHub repository secrets**.
 
 | Secret Name | Purpose | Used By |
 |------------|---------|---------|
-| `API_BASE_URL` | Full public URL of the API for health probes | `deploy.sh` |
-| `CORS_ORIGIN` | Allowed CORS origins for the deployed container | `deploy.sh` pre-flight validation |
-| `DO_HOST` | DigitalOcean VPS IP / hostname | Operator's SSH configuration |
-| `DO_USER` | SSH username on VPS | Operator's SSH configuration |
-| `DO_SSH_KEY` | SSH private key (PEM) | Operator's SSH configuration |
+| `API_BASE_URL` | Full public URL of the API for health probes | `deploy.yml`, `deploy.sh` |
+| `CORS_ORIGIN` | Allowed CORS origins for the deployed container | `deploy.yml` (pre-flight validation) |
+| `DO_HOST` | DigitalOcean VPS IP / hostname | SSH deploy steps |
+| `DO_USER` | SSH username on VPS | SSH deploy steps |
+| `DO_SSH_KEY` | SSH private key (PEM) | SSH deploy steps |
 
-> **Renamed:** `FT_API_BASE_URL` → `API_BASE_URL`. Update the deployment environment accordingly.
+> **Renamed:** `FT_API_BASE_URL` → `API_BASE_URL`. Update the GitHub repo secret accordingly.
 
 ---
 
@@ -234,7 +236,7 @@ The following variables were **renamed** as part of the env contract cleanup (Ma
 
 | Old Name | New Name | Where |
 |----------|----------|-------|
-| `FT_API_BASE_URL` | `API_BASE_URL` | Deployment environment |
+| `FT_API_BASE_URL` | `API_BASE_URL` | GitHub secrets, `deploy.yml` |
 
 **Action required:**
-1. Rename the deployment variable `FT_API_BASE_URL` → `API_BASE_URL`
+1. Rename the GitHub repository secret `FT_API_BASE_URL` → `API_BASE_URL`
