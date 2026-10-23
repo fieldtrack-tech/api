@@ -1,9 +1,10 @@
 // ⚠️  DO NOT add env variables without updating ALL of the following:
 //   - .env.example                      (developer template — every variable must appear here)
+//   - .github/workflows/pr.yml          (CI env: block — non-secret defaults for container bootstrap)
 //   - docs/env-contract.md              (source-of-truth documentation table)
 //   - scripts/deploy.sh                 (deploy-time environment validation)
 //
-// Failure to keep these in sync causes config drift and
+// Failure to keep these in sync causes config drift, silent CI failures, and
 // environment contract violations caught only at production deploy time.
 
 /**

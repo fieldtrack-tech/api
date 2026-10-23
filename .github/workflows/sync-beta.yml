@@ -1,0 +1,51 @@
+﻿name: Sync beta ΓåÉ master
+
+on:
+  workflow_run:
+    workflows: ["Deploy to Production"]
+    types: [completed]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-beta
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+
+      - name: Fetch branches
+        run: |
+          git fetch origin master
+          git fetch origin beta
+
+      - name: Show overwritten commits
+        run: |
+          echo "=== Overwritten commits ==="
+          git log origin/master..origin/beta --oneline || echo "(none)"
+          echo "==========================="
+
+      - name: Sync beta to master
+        run: |
+          git checkout -B beta origin/master
+          git push origin beta --force
+          echo "Γ£ô beta synced"
+
+      - name: Verify
+        run: |
+          git fetch origin
+          git log origin/beta -3 --oneline
