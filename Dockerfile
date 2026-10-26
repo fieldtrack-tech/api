@@ -17,7 +17,7 @@
 
 # ---- Stage 1: Build --------------------------------------------------------
 # Pinned to specific version to prevent supply chain attacks.
-# Digest pinned to linux/amd64 manifest (resolved 2026-03-28).
+# Digest pinned to linux/amd64 manifest (resolved 2026-10-26).
 # To rotate: docker manifest inspect node:24.2.0-bookworm-slim
 #   and replace the sha256 below with the current amd64 digest.
 FROM node:24.2.0-bookworm-slim@sha256:1a6a7b2e2e2c80a6973f57aa8b0c6ad67a961ddbc5ef326c448e133f93564ff9 AS builder
@@ -93,7 +93,7 @@ RUN find /tmp/distroless-dpkg -type f -exec \
 #   • Node.js 24 runtime binary (at /nodejs/bin/node)
 #   • Minimal glibc + libssl from Debian 12
 #   • No shell, no package manager, no OS utilities
-# Digest pinned to linux/amd64 manifest (resolved 2026-03-28).
+# Digest pinned to linux/amd64 manifest (resolved 2026-10-26).
 # To rotate: docker manifest inspect gcr.io/distroless/nodejs24-debian12:nonroot
 #   and replace the sha256 below with the current amd64 digest.
 # ENTRYPOINT is ["/nodejs/bin/node"]; CMD supplies the script path argument.
