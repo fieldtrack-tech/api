@@ -35,9 +35,18 @@ CREATE EXTENSION IF NOT EXISTS "pg_stat_statements";
 -- ENUMS
 -- ══════════════════════════════════════════════════════════════
 
-CREATE TYPE IF NOT EXISTS public.user_role AS ENUM ('ADMIN', 'EMPLOYEE');
-CREATE TYPE IF NOT EXISTS public.expense_status AS ENUM ('PENDING', 'APPROVED', 'REJECTED');
-CREATE TYPE IF NOT EXISTS public.distance_job_status AS ENUM ('pending', 'processing', 'done', 'failed');
+DO $$ BEGIN
+  CREATE TYPE public.user_role AS ENUM ('ADMIN', 'EMPLOYEE');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+DO $$ BEGIN
+  CREATE TYPE public.expense_status AS ENUM ('PENDING', 'APPROVED', 'REJECTED');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+DO $$ BEGIN
+  CREATE TYPE public.distance_job_status AS ENUM ('pending', 'processing', 'done', 'failed');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- ══════════════════════════════════════════════════════════════
 -- SEQUENCES

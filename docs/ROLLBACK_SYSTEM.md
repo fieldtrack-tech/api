@@ -2,7 +2,10 @@
 
 ## Overview
 
-The rollback system provides instant production recovery by redeploying previously deployed Docker images. It works in <10 seconds by reusing existing images from GitHub Container Registry without rebuilding.
+The rollback system redeploys a previously successful Docker image without a
+source rebuild. Source audit: 2026-11-24. Duration depends on pulls, HTTP probes,
+Docker health and stabilization; recovery in less than 10 seconds is not guaranteed.
+An image rollback does not reverse database migrations.
 
 ## Architecture
 
@@ -32,7 +35,7 @@ The deployment script maintains a history of the last 5 successful deployments:
 
 ```bash
 # Location
-/api/.deploy_history
+$DEPLOY_ROOT/.deploy_history
 
 # Content (newest first, one SHA per line)
 b8c4d2e
@@ -74,7 +77,8 @@ cd "$HOME/api"
 ./scripts/deploy.sh --rollback
 ```
 
-**Interactive output with history:**
+**Illustrative history display:** the current script prints current SHA and
+rollback target; inspect `.deploy_history` separately for the full five-entry list.
 ```
 Current deployment : b8c4d2e
 Previous deployment: a4f91c2
@@ -123,7 +127,8 @@ Rollback requires explicit user confirmation to prevent accidental rollbacks.
 Both deployment and rollback perform health checks before switching traffic:
 
 ```bash
-# 20 attempts with 3-second intervals
+# Up to 40 HTTP attempts, 3–5-second sleeps plus probe time
+# Separate Docker HEALTHCHECK wait and pre-switch/stability probes
 # Automatic cleanup if health check fails
 # No traffic switched to unhealthy containers
 ```
@@ -133,8 +138,8 @@ Both deployment and rollback perform health checks before switching traffic:
 Nginx configuration is validated before reload:
 
 ```bash
-sudo nginx -t              # Test configuration
-sudo systemctl reload nginx # Reload only if valid
+docker exec nginx nginx -t
+docker exec nginx nginx -s reload
 ```
 
 ## Rollback Scenarios
@@ -157,7 +162,7 @@ sudo systemctl reload nginx # Reload only if valid
 ./scripts/deploy.sh --rollback
 
 # Confirms rollback
-# Redeploys previous image in <10 seconds
+# Redeploys the previous image; duration depends on health/pull checks
 # Production restored
 ```
 
@@ -179,7 +184,7 @@ sudo systemctl reload nginx # Reload only if valid
 ```yaml
 - name: Deploy to VPS
   run: |
-    ssh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+    ssh ${{ secrets.DO_USER }}@${{ secrets.DO_HOST }} \
       "cd \"$HOME/api\" && \
        ./scripts/deploy.sh ${{ env.SHA_SHORT }}"
 ```
@@ -192,7 +197,7 @@ Every CI deployment automatically updates `.deploy_history`:
 Commit a4f91c2 → Deploy → .deploy_history = ["a4f91c2"]
 Commit b8c4d2e → Deploy → .deploy_history = ["b8c4d2e", "a4f91c2"]
 Commit c5f7a1b → Deploy → .deploy_history = ["c5f7a1b", "b8c4d2e", "a4f91c2"]
-Rollback       → Deploy → .deploy_history = ["a4f91c2", "c5f7a1b", "b8c4d2e"]
+Rollback       → Deploy → .deploy_history = ["b8c4d2e", "c5f7a1b", "b8c4d2e", "a4f91c2"]
 ```
 
 The history maintains the last 5 deployments in chronological order (newest first).
@@ -247,9 +252,11 @@ Error response from daemon: manifest for ghcr.io/fieldtrack-tech/api:abc123 not 
 
 ## Performance
 
-- **Rollback time:** <10 seconds (image already cached)
-- **Health check:** 20 attempts × 3 seconds = 60 seconds max
-- **Zero downtime:** Blue-green ensures old container runs until new is healthy
+- **Rollback time:** variable; no measured recovery-time guarantee in this audit.
+- **Health check:** up to 40 HTTP attempts with jitter, plus independent Docker health and stabilization checks.
+- **Availability goal:** the old API slot remains until the replacement is healthy.
+  Infra nginx sync/watchdog recreates the proxy, so workspace-wide zero downtime
+  cannot be guaranteed merely by the blue-green API script.
 
 ## Security Considerations
 
@@ -257,14 +264,21 @@ Error response from daemon: manifest for ghcr.io/fieldtrack-tech/api:abc123 not 
 2. **Health validation:** No traffic switched to unhealthy containers
 3. **Nginx validation:** Configuration tested before reload
 4. **Confirmation prompt:** Prevents accidental rollbacks
-5. **Deployment history:** Single source of truth for last known good version
+5. **Deployment state:** history plus the active-slot, backup and last-good state
+   managed under `FIELDTRACK_STATE_DIR` (default `/var/lib/fieldtrack`, with a
+   `$DEPLOY_ROOT/.fieldtrack` fallback).
+
+Coordinate API deployments with infra watchdog/config changes: they currently
+write the same live nginx file without a shared cross-repository lock. If the
+release changes SQL/client contracts, verify the old image remains compatible
+before rollback. Do not execute destructive SQL simply because an image failed.
 
 ## Future Enhancements
 
 Potential improvements (not currently implemented):
 
 - Rollback to specific history entry (e.g., rollback to entry 3)
-- Automatic rollback on health check failure
+- Shared API/infra deployment locking and non-disruptive proxy reloads
 - Deployment metadata (timestamp, deployer, commit message)
 - Rollback notifications (Slack, email)
 - Deployment audit log with full details
@@ -272,4 +286,4 @@ Potential improvements (not currently implemented):
 ## Related Documentation
 
 - [Blue-Green Deployment](./DEPLOYMENT.md)
-- [CI/CD Pipeline](.github/workflows/deploy.yml)
+- [CI/CD Pipeline](../.github/workflows/deploy.yml)

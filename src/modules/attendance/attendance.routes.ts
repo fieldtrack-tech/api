@@ -4,7 +4,9 @@ import { authenticate } from "../../middleware/auth.js";
 import { requireRole } from "../../middleware/role-guard.js";
 import { attendanceController } from "./attendance.controller.js";
 import { sessionSummaryController } from "../session_summary/session_summary.controller.js";
-import { mySessionsQuerySchema } from "./attendance.schema.js";
+import { mySessionsQuerySchema, cameraCheckInSchema } from "./attendance.schema.js";
+import { attendanceSelfieService } from "./attendance-selfie.service.js";
+import { ok, handleError } from "../../utils/response.js";
 
 // ─── Shared response schema ────────────────────────────────────────────────────
 
@@ -30,6 +32,19 @@ const sessionResponseSchema = z.object({
  * ADMIN-only routes use the requireRole middleware.
  */
 export async function attendanceRoutes(app: FastifyInstance): Promise<void> {
+  app.post("/attendance/selfie-challenge", {
+    preValidation: [authenticate, requireRole("EMPLOYEE")],
+    config: { rateLimit: { max: 10, timeWindow: 60_000 } },
+  }, async (request, reply) => {
+    try { reply.code(201).send(ok(await attendanceSelfieService.challenge(request))); }
+    catch (error) { handleError(error, request, reply, "Could not prepare selfie check-in"); }
+  });
+  app.get("/attendance/:sessionId/selfie", {
+    preValidation: [authenticate], schema: { params: z.object({ sessionId: z.string().uuid() }) },
+  }, async (request, reply) => {
+    try { reply.send(ok(await attendanceSelfieService.view(request, (request.params as { sessionId: string }).sessionId))); }
+    catch (error) { handleError(error, request, reply, "Could not view attendance selfie"); }
+  });
   // Check in — EMPLOYEE only (ADMIN cannot participate in attendance)
   app.post(
     "/attendance/check-in",
@@ -39,8 +54,9 @@ export async function attendanceRoutes(app: FastifyInstance): Promise<void> {
         summary: "Check in (start a new attendance session)",
         description:
           "Creates a new open attendance session for the authenticated employee. " +
-          "No request body required — identity is resolved from the JWT. " +
-          "Returns 409 if the employee already has an open session.",
+          "Requires a fresh camera selfie challenge and accurate GPS location. Identity is resolved from the JWT. " +
+          "Returns 400 if the employee already has an open session.",
+        body: cameraCheckInSchema,
         response: { 201: sessionResponseSchema.describe("Created attendance session") },
       },
       preValidation: [authenticate, requireRole("EMPLOYEE")],
@@ -58,7 +74,7 @@ export async function attendanceRoutes(app: FastifyInstance): Promise<void> {
         description:
           "Closes the employee's current open session and enqueues distance/analytics jobs. " +
           "No request body required — identity is resolved from the JWT. " +
-          "Returns 409 if there is no open session to close.",
+          "Returns 400 with NO_ACTIVE_SHIFT if there is no open session to close.",
         response: { 200: sessionResponseSchema.describe("Closed attendance session") },
       },
       preValidation: [authenticate, requireRole("EMPLOYEE")],

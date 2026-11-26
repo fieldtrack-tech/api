@@ -2,6 +2,10 @@
 
 This document defines the service-level objectives for FieldTrack production services. Alert rules are implemented in the standalone infra repository.
 
+Source audit: 2026-11-24. These are targets, not measured guarantees. Alert
+coverage differs from the targets and currently has readiness/snapshot/deployment
+expression gaps; see `OBSERVABILITY_ARCHITECTURE.md` for the implemented boundaries.
+
 ---
 
 ## Definitions
@@ -19,9 +23,9 @@ This document defines the service-level objectives for FieldTrack production ser
 
 | | |
 |---|---|
-| **SLI** | HTTP availability measured from `up` metric on API containers |
+| **SLI** | Routed HTTP liveness: `probe_success{job="fieldtrack-route-health"}`; container `up` is a separate scrape-health signal |
 | **Target** | 99.9% monthly availability |
-| **Error budget** | 43.8 minutes / month |
+| **Error budget** | 43.2 minutes per 30-day window |
 | **Window** | 30-day rolling |
 
 ### Rationale
@@ -72,13 +76,15 @@ Sub-1h monthly downtime budget is appropriate for a B2B scheduling SaaS.  Breach
 | Attempt | Delay from previous |
 |---|---|
 | 1 | Immediate |
-| 2 | ~1 min (±20% jitter) |
-| 3 | ~5 min (±20% jitter) |
-| 4 | ~15 min (±20% jitter) |
-| 5 | ~1 h (±20% jitter) |
+| 2 | 1–1.2 min (+0–20% jitter) |
+| 3 | 5–6 min (+0–20% jitter) |
+| 4 | 15–18 min (+0–20% jitter) |
+| 5 | 60–72 min (+0–20% jitter) |
 | After attempt 5 | Moved to Dead-Letter Queue |
 
-All 5 retry attempts fit within the 1-hour SLO window.
+The full retry schedule is **81–97.2 minutes**, plus delivery/queue time, and
+therefore does not fit the proposed one-hour target. Current webhook alerts
+measure failure/attempt metrics rather than an end-to-end one-hour delivery SLI.
 
 ### Rationale
 Webhook delivery failures directly affect customer integrations.  The DLQ captures permanent failures for manual replay; the SLO tracks the fraction that need manual intervention.
@@ -101,13 +107,13 @@ A DLQ backlog above 100 indicates a systemic delivery failure (bad endpoint conf
 
 ## Error Budget Alert Strategy
 
-The following multi-burn-rate windows are used for the error budget alerts to catch both fast burns (page immediately) and slow burns (ticket within the hour):
+The currently implemented burn alerts use these single long-window conditions.
+Short-window conjunctions/multi-window confirmation are not implemented:
 
 | Window | Burn rate threshold | Severity | Action |
 |---|---|---|---|
-| 1h/5m | 14× | critical | Page on-call |
-| 6h/30m | 6× | warning | Open ticket |
-| 1d/2h | 3× | warning | Engineering review |
+| 1h, sustained 5m | >14% error rate (14× a 1% budget) | critical | Investigate/page |
+| 6h, sustained 15m | >6% error rate (6× a 1% budget) | warning | Engineering review |
 
 ---
 
@@ -130,6 +136,13 @@ The following multi-burn-rate windows are used for the error budget alerts to ca
 ---
 
 ## Review Cadence
+
+Implementation distinctions to review: high-error alert is >5% for 2m; p95
+latency alert is >1s for 5m (not the 500ms target); p99 is >2s for 10m. The
+`api_error_budget_remaining_30d` recording rule currently returns success ratio,
+not remaining normalized error budget. `DeploymentFailure` uses filtered `up`
+series and needs correction for an all-down state. The `api-ready` job attempts
+to scrape JSON as metrics, and the snapshot alert has no configured probe job.
 
 - **Monthly**: review error budget consumption; adjust SLO thresholds if engineering velocity is affected.
 - **Post-incident**: update error budget retroactively; add alert tuning if a regression was missed.

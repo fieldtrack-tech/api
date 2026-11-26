@@ -23,7 +23,8 @@
 
 <!-- What problem does this solve? Link any related issues or discussions. -->
 
-Closes #
+<!-- Link an existing issue if appropriate. Keep private security findings and
+     workspace-local audit records out of public PR descriptions. -->
 
 ---
 
@@ -40,12 +41,17 @@ Closes #
 
 - [ ] `npm run typecheck` passes
 - [ ] `npm test` passes
+- [ ] `npm run lint` passes
 - [ ] Integration tests pass locally
 - [ ] Manually tested the changed flows end-to-end
 - [ ] No special deployment steps required
 - [ ] Requires new environment variable: `___`
 - [ ] Requires Supabase migration: `supabase/migrations/___`
 - [ ] Requires manual action on VPS: `___`
+- [ ] SQL/RPC changes tested against a disposable schema, including tenant grants
+- [ ] Real BullMQ IDs/options checked if queue code changed (not only mocked `.add()`)
+- [ ] Camera/GPS/background tracking checked on a physical device if applicable
+- [ ] Coordinated client/API migration and rollback compatibility reviewed
 
 ---
 
@@ -53,7 +59,10 @@ Closes #
 
 - [ ] PR title follows conventional commit format (`type(scope): description`)
 - [ ] Branch name follows convention (`feat/*`, `fix/*`, `docs/*`, etc.)
-- [ ] No debug logs, commented-out code, or `TODO` / `FIXME` left in diff
+- [ ] No credentials, selfie data or raw tokens in logs/examples; limitations are documented
 - [ ] No secrets or credentials committed
 - [ ] Relevant documentation updated (if applicable)
 - [ ] CHANGELOG updated (if applicable)
+
+<!-- Template reviewed 2026-11-24. Test/build success is not evidence that a
+     live migration, device flow, security scan or deployment was exercised. -->

@@ -11,7 +11,7 @@ const EMPLOYEE_COLS =
 
 /** Generate the next sequential employee code via the DB function. */
 async function nextEmployeeCode(prefix = "EMP"): Promise<string> {
-  const { data, error } = await supabase.rpc("generate_employee_code", { prefix });
+  const { data, error } = await supabase.rpc("generate_employee_code", { p_prefix: prefix });
   if (error || !data) throw new Error(`Failed to generate employee code: ${error?.message}`);
   return data as string;
 }

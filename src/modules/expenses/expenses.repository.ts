@@ -4,7 +4,7 @@ import { applyPagination } from "../../utils/pagination.js";
 import type { FastifyRequest } from "fastify";
 import type { Expense, ExpenseStatus, CreateExpenseBody } from "./expenses.schema.js";
 import type { EmployeeExpenseSummary } from "../../types/shared.js";
-import { BadRequestError } from "../../utils/errors.js";
+import { BadRequestError, ExpenseAlreadyReviewed, NotFoundError } from "../../utils/errors.js";
 
 /** Enriched expense returned by list queries — adds employee code and name. */
 export type EnrichedExpense = Expense & {
@@ -32,7 +32,7 @@ export const expensesRepository = {
     request: FastifyRequest,
     employeeId: string,
     body: CreateExpenseBody,
-  ): Promise<Expense> {
+  ): Promise<{ expense: Expense; created: boolean }> {
     const now = new Date().toISOString();
 
     const { data, error } = await supabase
@@ -51,13 +51,22 @@ export const expensesRepository = {
       .single();
 
     if (error) {
-      // Unique constraint violation on idempotency_key = duplicate submission
       if (error.code === "23505" && body.idempotency_key) {
-        throw new BadRequestError("Duplicate expense submission (idempotency key already used)");
+        const prior = await orgTable(request, "expenses").select(EXPENSE_COLS)
+          .eq("employee_id", employeeId).eq("idempotency_key", body.idempotency_key).maybeSingle();
+        if (prior.error) throw new Error(`Failed to retrieve expense submission: ${prior.error.message}`);
+        if (prior.data) {
+          const expense = prior.data as Expense;
+          if (Number(expense.amount) !== body.amount || expense.description !== body.description ||
+            expense.receipt_url !== (body.receipt_url ?? null)) {
+            throw new BadRequestError("This idempotency key was already used for a different expense.", "EXPENSE_KEY_CONFLICT");
+          }
+          return { expense, created: false };
+        }
       }
       throw new Error(`Failed to create expense: ${error.message}`);
     }
-    return data as Expense;
+    return { expense: data as Expense, created: true };
   },
 
   async findExpenseById(
@@ -178,11 +187,17 @@ export const expensesRepository = {
     const { data, error } = await orgTable(request, "expenses")
       .update(updatePayload)
       .eq("id", expenseId)
+      .eq("status", "PENDING")
       .select(EXPENSE_ENRICHED_COLS)
-      .single();
+      .maybeSingle();
 
     if (error) {
       throw new Error(`Failed to update expense status: ${error.message}`);
+    }
+    if (!data) {
+      const current = await this.findExpenseById(request, expenseId);
+      if (!current) throw new NotFoundError("Expense not found");
+      throw new ExpenseAlreadyReviewed(current.status);
     }
     return flattenEmployee(data as Record<string, unknown>);
   },

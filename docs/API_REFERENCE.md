@@ -2,6 +2,10 @@
 
 Implementation-aligned contract reference for the current API.
 
+Last source audit: 2026-11-24. Generated OpenAPI reflects registered schemas,
+but several field-operation/operational endpoints have no response schema;
+generation is not proof of complete schema coverage or live deployment.
+
 For generated OpenAPI, use:
 
 - `GET /openapi.json`
@@ -19,8 +23,21 @@ Supported auth methods:
 Identity claims used by the API:
 
 - `sub`
-- `organization_id`
+- `org_id` in the verified JWT (normalized to `request.organizationId` / application `organization_id`)
 - `role` (`ADMIN` or `EMPLOYEE`)
+- `employee_id` for EMPLOYEE tokens (distinct from auth `sub`)
+
+Production tokens are ES256 with `kid`, expected Supabase issuer and
+`aud=authenticated`. User-editable metadata is not an API authorization source.
+API keys receive admin-shaped context without employee identity; scopes still
+apply. Attendance/camera/employee expense creation therefore require employee JWTs.
+
+SQL RPC policy after applying the FT-001 permission repair: known backend RPCs
+are service-role-only; clients use these HTTP endpoints with JWT/API-key auth,
+not direct Supabase RPC calls, even for same-organization reads. The auth hook is
+dedicated to Supabase Auth admin. The repair is in
+`supabase/migrations/20261124000200_rpc_permissions_hardening.sql` and has been
+verified locally but not applied to a live database by the agent.
 
 ## Standard Response Envelope
 
@@ -68,6 +85,12 @@ Example typed error codes used in responses include values such as `VALIDATION_E
 - `GET /metrics` Prometheus/OpenMetrics
 - `GET /openapi.json` OpenAPI spec
 - `GET /docs` Swagger UI
+
+These system/documentation routes do not require employee JWTs. `/metrics`
+requires the configured scrape bearer token, mandatory in production. `/health`
+returns 503 before bootstrap, then includes a config hash. `/ready` returns JSON
+dependency status, not Prometheus metrics, and does not currently gate on its
+reported worker status. `/auth/login` is public; `/auth/me` is authenticated.
 
 ## Auth Endpoints
 
@@ -120,10 +143,36 @@ Response:
 ### Attendance
 
 - `POST /attendance/check-in` (EMPLOYEE)
+- `POST /attendance/selfie-challenge` (EMPLOYEE, 10/minute per IP)
+- `GET /attendance/:sessionId/selfie` (own employee session or admin organization session)
 - `POST /attendance/check-out` (EMPLOYEE)
 - `POST /attendance/:sessionId/recalculate` (authenticated, rate-limited)
 - `GET /attendance/my-sessions?page&limit&status`
 - `GET /attendance/org-sessions` is removed and returns `410`; use admin sessions endpoint.
+
+Check-in sequence: obtain a challenge, capture a fresh camera selfie, stamp GPS
+and IST time plus GPS EXIF, PUT JPEG bytes to the returned `upload_url`, then
+submit the following JSON. Gallery/arbitrary external photo URLs are not part
+of the client capture flow.
+
+```json
+{
+  "challenge_id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+  "latitude": 19.076,
+  "longitude": 72.8777,
+  "accuracy": 10,
+  "captured_at": "2026-11-24T09:00:00.000Z",
+  "location_at": "2026-11-24T09:00:00.000Z"
+}
+```
+
+Use current timestamps, not the example's fixed date. Photo/GPS age <=2 minutes,
+future tolerance 30 seconds, challenge lifetime 5 minutes, accuracy <=100m, JPEG
+100 bytes–5MB, and GPS EXIF must match submitted coordinates within 0.00001°.
+The service verifies header/metadata, not full image decoding or biometric identity.
+The SQL transaction consumes the challenge and writes start GPS with attendance.
+Check-out needs no body. Duplicate-open/no-open cases are **400**, not 409.
+Selfie view returns `{url, expires_in:60}` with a private signed URL.
 
 Session status filter values:
 
@@ -156,6 +205,13 @@ Example response item:
 - `GET /locations/my-route?sessionId=<uuid>`
 
 `/locations/my-route` accepts `sessionId` and legacy-compatible `session_id` query params.
+
+Ingestion requires the employee's still-open session. Points before check-in or
+more than two minutes in the future are rejected. Closing a session prevents
+later upload of points recorded during it. Route retrieval is ordered by time
+but currently lacks exhaustive pagination, so a PostgREST row limit can truncate
+long routes. A duplicate single-point upsert can return an error rather than a
+stable prior row; batch upserts suppress duplicates.
 
 Single-point request example:
 
@@ -204,6 +260,12 @@ Employee expense status values:
 - `GET /admin/expenses/export`
 
 Review body example:
+
+Rejection requires `rejection_comment`; approval needs only `status`. Review
+currently checks PENDING before an unconditional update, not an atomic
+compare-and-set, so concurrent reviews are not protected at the DB boundary.
+API-key expense review passes a synthetic `sub`, which is incompatible with the
+UUID reviewer column; use an admin JWT for review.
 
 ```json
 {
@@ -276,6 +338,38 @@ API key routes require JWT auth and cannot be managed with API key auth itself.
 - `POST /admin/webhook-dlq/:id/retry`
 
 Legacy aliases under `/webhooks*` exist for backward compatibility and are hidden from OpenAPI.
+
+## Field locations, salaries and earnings
+
+| Endpoint | Access | Contract |
+|---|---|---|
+| `GET /field/settings` | Authenticated | Company settings or null |
+| `POST /admin/field/settings` | ADMIN | `{currency, timezone}`; defaults INR / `Asia/Kolkata`; one-time setup |
+| `GET /field/sites` | Authenticated | All company sites, including inactive entries |
+| `POST /admin/field/sites` | ADMIN | Full location definition, below |
+| `PATCH /admin/field/sites/:id` | ADMIN | Full definition, not a partial patch |
+| `GET /admin/field/basic-pay` | ADMIN | Salary effective-month history |
+| `POST /admin/field/basic-pay/:employeeId` | ADMIN | `{effective_month:"YYYY-MM-01", amount_minor}` |
+| `GET /admin/field/reports` | ADMIN | `period=week|month&date=YYYY-MM-DD[&employee_id=UUID]` |
+| `GET /field/my-report` | EMPLOYEE | Same period/date, always employee's own identity |
+| `GET /admin/field/reports/export` | ADMIN | JSON `{filename,csv}`, not raw CSV attachment |
+
+Site body: `name`, `address`, `latitude`, `longitude`, `arrival_radius_m`,
+`departure_radius_m`, `visit_rate_minor`, `is_active`. Arrival radius 25–5000m;
+departure radius must be larger and <=50000m. Money is integer minor units
+(12500 = ₹125.00), 0–100000000000 per configured rate/salary.
+
+Reports return period, currency, timezone, `from`, `to_exclusive` and employee
+rows containing attendance evidence, distinct selfie-attendance days, visits,
+basic pay, visit count/earnings and monthly total. Calendar months and
+Monday–Sunday weeks use company timezone; ends are exclusive. Monthly total
+= full basic pay + visits; missing salary gives null, and weekly basic/total are
+null rather than weekly proration. Current totals are provisional, not locked.
+
+Every visit needs an observed distant departure and confident arrival in the
+same attendance session. No dwell/assignment validation exists. All active sites
+are evaluated, so overlapping geofences need careful configuration. Rates are
+snapshotted using arrival-time history. See [FIELD_OPERATIONS.md](FIELD_OPERATIONS.md).
 
 ### Internal Admin Probes
 

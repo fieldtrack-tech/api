@@ -221,7 +221,7 @@ export async function enqueueToDlq(data: WebhookDeliveryJobData): Promise<void> 
   await dlq.add(
     "dlq-delivery",
     data,
-    { jobId: `dlq:${data.delivery_id}` },
+    { jobId: `dlq-${data.delivery_id}` },
   );
 }
 
@@ -243,7 +243,7 @@ export async function getWebhookDlqDepth(): Promise<number> {
  */
 export async function replayWebhookDlqJob(deliveryId: string): Promise<boolean> {
   const dlq = getWebhookDlq();
-  const jobId = `dlq:${deliveryId}`;
+  const jobId = `dlq-${deliveryId}`;
   const job = await dlq.getJob(jobId);
   if (!job) return false;
 

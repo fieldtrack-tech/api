@@ -50,7 +50,8 @@ You will receive an acknowledgement within **48 hours** and a resolution timelin
 - **Defense-in-depth:** Header algorithm is validated before signature verification (3 layers total)
 - **Dependency boundary:** CI verifies `@fastify/jwt` is NOT in production bundle
 
-**Risk Level:** NONE
+**Risk statement:** this dependency boundary reduces one specific risk. It does
+not establish that the current runtime dependency graph is vulnerability-free.
 
 **Why this is safe:**
 1. Asymmetric keys (JWKS endpoint): CVE-2023-48223 exploits symmetric key confusion, which cannot happen with asymmetric keys
@@ -95,8 +96,12 @@ You will receive an acknowledgement within **48 hours** and a resolution timelin
 These design decisions are intentional and not vulnerabilities:
 
 - `sequence_number` in `gps_locations` is **nullable by design** during mobile stabilization — ordering falls back to `recorded_at`
-- `GET /debug/redis` is **disabled in production** (`NODE_ENV=production` returns 404) — this is enforced in code, not just config
-- JWT claims are re-validated on every request using Zod — stale or malformed claims are rejected even if the signature is valid
+- `GET /debug/redis` is disabled when `APP_ENV=production`; do not infer this from
+  `NODE_ENV` alone.
+- JWT application claims are schema-validated on every request. Authorization
+  uses top-level `role`, `org_id` and `employee_id`, not user-editable metadata.
+  A still-valid token is not automatically revoked when an employee is disabled;
+  the camera check-in RPC separately checks current employee activity.
 - Rate-limit counters are stored in Redis with a **separate connection** from the job queue to prevent counter manipulation via queue exhaustion
 
 ---
@@ -106,8 +111,47 @@ These design decisions are intentional and not vulnerabilities:
 Dependencies are managed via `npm ci` (deterministic installs from `package-lock.json`). To audit for known vulnerabilities:
 
 ```bash
-cd backend
+cd api
 npm audit
 ```
 
-Critical and high severity vulnerabilities in production dependencies block deployment via CI.
+The PR and production workflows fail on high or critical runtime npm advisories.
+Image vulnerability scanning remains a separate release check.
+
+## Field attendance and data protection
+
+The supported clients take camera selfies and add a visible GPS, accuracy and
+timestamp footer plus GPS EXIF. The API decodes the JPEG under size and pixel
+limits and matches the embedded coordinates to the submitted check-in. Selfies
+use private storage, short-lived view URLs and one-use upload challenges.
+
+Backend service-role access bypasses RLS. Review grants and authorization inside
+each SQL RPC. The permission migration restricts backend-owned functions to the
+service role and preserves the dedicated Supabase Auth hook. Webhook delivery pins
+the validated outbound address. Fastify trusts the immediate nginx forwarding hop
+in staging and production.
+
+Detailed local audit findings must remain private; do not post exploitation
+details, credentials or employee GPS/selfies to public issues or repository docs.
+
+## Service-only RPC permission policy (FT-001)
+
+`supabase/migrations/20261124000200_rpc_permissions_hardening.sql` is a forward,
+permission-only repair for the known backend RPCs. It revokes inherited PUBLIC
+and explicit anon/authenticated execution from every installed overload and
+grants the backend `service_role`. Users call the authenticated API, not these
+RPCs directly, even for their own organization. The JWT hook remains callable by
+`supabase_auth_admin`, not by client/service roles. Existing unrelated utilities
+and extension routines are deliberately not blanket-revoked.
+
+Future defaults are hardened for the migration's executing DDL owner (normally
+postgres). PostgreSQL's global PUBLIC function default must be revoked globally;
+a per-schema REVOKE alone is insufficient. The repair also removes additive
+public-schema client grants and explicitly grants service-role execution for new
+public functions. Intentionally client-callable functions need reviewed explicit
+grants and caller/tenant checks; new auth hooks must explicitly grant Auth admin
+and exclude other roles. Review other DDL owners/manually granted roles separately.
+
+Verification is in `tests/integration/rpc-permissions.test.ts` using dev-only
+PGlite, without a live database or network. Applying/validating the repair in
+staging/production still requires explicit authorization and grant review.

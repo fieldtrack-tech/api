@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
-import { authenticate } from "../middleware/auth.js";
+import { authenticate, requireJwtAuth } from "../middleware/auth.js";
 import { requireRole } from "../middleware/role-guard.js";
 import { sseEventBus } from "../utils/sse-emitter.js";
 
@@ -38,7 +38,7 @@ export async function eventsRoutes(app: FastifyInstance): Promise<void> {
         description: "Server-Sent Events stream for real-time org activity (ADMIN only).",
         // No response schema — SSE uses raw `text/event-stream`, not JSON.
       },
-      preValidation: [authenticate, requireRole("ADMIN")],
+      preValidation: [authenticate, requireJwtAuth, requireRole("ADMIN")],
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const orgId = request.organizationId;
@@ -58,8 +58,12 @@ export async function eventsRoutes(app: FastifyInstance): Promise<void> {
       }
       orgConnectionCount.set(orgId, currentCount + 1);
 
-      // SSE headers
-      void reply.raw.writeHead(200, {
+      reply.hijack();
+      reply.raw.setTimeout(0);
+      for (const [name, value] of Object.entries(reply.getHeaders())) {
+        if (value !== undefined) reply.raw.setHeader(name, value);
+      }
+      reply.raw.writeHead(200, {
         "Content-Type": "text/event-stream; charset=utf-8",
         "Cache-Control": "no-cache, no-transform",
         Connection: "keep-alive",
@@ -79,11 +83,9 @@ export async function eventsRoutes(app: FastifyInstance): Promise<void> {
       sendEvent("connected", { orgId });
 
       // Heartbeat — keeps the connection alive through proxies
-      const heartbeat = setInterval(() => {
-        if (!reply.raw.writableEnded) {
-          sendComment("ping");
-        }
-      }, 30_000);
+      const heartbeat = setInterval(() => sendComment("ping"), 30_000);
+      const expiresIn = request.authExpiresAt === undefined ? 15 * 60_000 : request.authExpiresAt - Date.now();
+      const expiry = setTimeout(() => reply.raw.end(), Math.min(15 * 60_000, Math.max(0, expiresIn)));
 
       // Org-scoped event handler
       function onOrgEvent(event: { type: string; payload: Record<string, unknown>; ts: string }) {
@@ -96,8 +98,9 @@ export async function eventsRoutes(app: FastifyInstance): Promise<void> {
       sseEventBus.on(channelKey, onOrgEvent);
 
       // Cleanup when client disconnects
-      request.raw.on("close", () => {
+      reply.raw.once("close", () => {
         clearInterval(heartbeat);
+        clearTimeout(expiry);
         sseEventBus.off(channelKey, onOrgEvent);
         // M4: decrement the per-org connection counter.
         const count = orgConnectionCount.get(orgId) ?? 1;
@@ -108,10 +111,6 @@ export async function eventsRoutes(app: FastifyInstance): Promise<void> {
         }
       });
 
-      // Keep the Fastify handler alive — SSE is a long-lived connection
-      await new Promise<void>((resolve) => {
-        request.raw.on("close", resolve);
-      });
     },
   );
 }

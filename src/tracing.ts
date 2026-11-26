@@ -9,9 +9,12 @@
 
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
-import { getNodeAutoInstrumentations } from "@opentelemetry/auto-instrumentations-node";
+import { HttpInstrumentation } from "@opentelemetry/instrumentation-http";
+import { DnsInstrumentation } from "@opentelemetry/instrumentation-dns";
+import { UndiciInstrumentation } from "@opentelemetry/instrumentation-undici";
+import { IORedisInstrumentation } from "@opentelemetry/instrumentation-ioredis";
 import { resourceFromAttributes } from "@opentelemetry/resources";
-import { AlwaysOnSampler } from "@opentelemetry/sdk-trace-base";
+import { AlwaysOnSampler } from "@opentelemetry/sdk-trace";
 import { env } from "./config/env.js";
 
 const sdk = new NodeSDK({
@@ -36,16 +39,10 @@ const sdk = new NodeSDK({
         url: `${env.TEMPO_ENDPOINT}/v1/traces`,
     }),
     instrumentations: [
-        getNodeAutoInstrumentations({
-            // Disable noisy fs instrumentation; keep HTTP + auto-tracing
-            // Note: @opentelemetry/instrumentation-fastify was removed in v0.75.0
-            // HTTP instrumentation covers Fastify requests via the underlying http module
-            "@opentelemetry/instrumentation-fs": { enabled: false },
-            "@opentelemetry/instrumentation-http": { enabled: true },
-            "@opentelemetry/instrumentation-dns": { enabled: true },
-            "@opentelemetry/instrumentation-undici": { enabled: true },
-            "@opentelemetry/instrumentation-ioredis": { enabled: true },
-        }),
+        new HttpInstrumentation(),
+        new DnsInstrumentation(),
+        new UndiciInstrumentation(),
+        new IORedisInstrumentation(),
     ],
 });
 

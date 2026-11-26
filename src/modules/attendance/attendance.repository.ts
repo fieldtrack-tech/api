@@ -2,7 +2,9 @@ import { supabaseServiceClient as supabase } from "../../config/supabase.js";
 import { orgTable } from "../../db/query.js";
 import { applyPagination } from "../../utils/pagination.js";
 import type { FastifyRequest, FastifyBaseLogger } from "fastify";
-import type { AttendanceSession } from "./attendance.schema.js";
+import type { AttendanceSession, CameraCheckIn } from "./attendance.schema.js";
+import { checkDbError } from "../field-operations/field-operations.repository.js";
+import { ForbiddenError, SessionAlreadyClosed } from "../../utils/errors.js";
 import type { ActivityStatus, SessionDTO } from "../../types/shared.js";
 import { computeActivityStatusFromSession, RECENT_WINDOW_MS } from "../../utils/activity.js";
 
@@ -96,55 +98,6 @@ export const attendanceRepository = {
   },
 
   /**
-   * Exact lookup to validate that a specific session belongs to the employee and is still active.
-   */
-  async validateSessionActive(
-    request: FastifyRequest,
-    sessionId: string,
-    employeeId: string,
-  ): Promise<boolean> {
-    const { data, error } = await orgTable(request, "attendance_sessions")
-      .select("id")
-      .eq("id", sessionId)
-      .eq("employee_id", employeeId)
-      .is("checkout_at", null)
-      .limit(1)
-      .single();
-
-    if (error && error.code === "PGRST116") {
-      return false;
-    }
-    if (error) {
-      throw new Error(`Failed to validate session: ${error.message}`);
-    }
-    return !!data;
-  },
-
-  /**
-   * Returns the checkin_at timestamp for an active session.
-   * Used by the locations service to reject GPS points recorded before the
-   * session started (replay / clock-skew guard).
-   * Returns null if the session is not found in the org (should not occur in
-   * practice after validateSessionActive has already confirmed the session).
-   */
-  async getSessionCheckinAt(
-    request: FastifyRequest,
-    sessionId: string,
-  ): Promise<string | null> {
-    const { data, error } = await orgTable(request, "attendance_sessions")
-      .select("checkin_at")
-      .eq("id", sessionId)
-      .is("checkout_at", null)
-      .limit(1)
-      .maybeSingle();
-
-    if (error) {
-      throw new Error(`Failed to fetch session checkin time: ${error.message}`);
-    }
-    return (data as { checkin_at: string } | null)?.checkin_at ?? null;
-  },
-
-  /**
    * Check whether an active employee exists within the requesting organization.
    * Used by the service layer to provide a clear error before hitting DB constraints.
    */
@@ -172,23 +125,21 @@ export const attendanceRepository = {
   async createSession(
     request: FastifyRequest,
     employeeId: string,
+    camera: CameraCheckIn,
   ): Promise<AttendanceSession> {
-    const now = new Date().toISOString();
-
-    const { data, error } = await supabase
-      .from("attendance_sessions")
-      .insert({
-        employee_id: employeeId,
-        organization_id: request.organizationId,
-        checkin_at: now,
-      })
-      .select("id, employee_id, organization_id, checkin_at, checkout_at, distance_recalculation_status, total_distance_km, total_duration_seconds, created_at, updated_at")
-      .single();
-
-    if (error) {
-      throw new Error(`Failed to create session: ${error.message}`);
+    // One transaction consumes the challenge, creates attendance and saves the
+    // starting GPS point. The employee lock prevents concurrent double check-in.
+    const { data, error } = await supabase.rpc("camera_attendance_checkin", {
+      p_org: request.organizationId, p_employee: employeeId, p_challenge: camera.challenge_id,
+      p_lat: camera.latitude, p_lng: camera.longitude, p_accuracy: camera.accuracy, p_captured_at: camera.captured_at,
+    });
+    if (error?.code === "42501" || (error?.code === "P0001" && error.message === "Employee is not active in this organization")) {
+      throw new ForbiddenError("Employee is inactive.", "EMPLOYEE_INACTIVE");
     }
-    return data as AttendanceSession;
+    checkDbError(error);
+    const session = (Array.isArray(data) ? data[0] : data) as AttendanceSession;
+    // Storage paths are private implementation details, not public photo URLs.
+    return { ...session, selfie_path: null };
   },
 
   /**
@@ -203,9 +154,11 @@ export const attendanceRepository = {
     const { data, error } = await orgTable(request, "attendance_sessions")
       .update({ checkout_at: now })
       .eq("id", sessionId)
+      .is("checkout_at", null)
       .select("id, employee_id, organization_id, checkin_at, checkout_at, distance_recalculation_status, total_distance_km, total_duration_seconds, created_at, updated_at")
       .single();
 
+    if (error?.code === "PGRST116") throw new SessionAlreadyClosed();
     if (error) {
       throw new Error(`Failed to close session: ${error.message}`);
     }
@@ -453,9 +406,9 @@ export const attendanceRepository = {
   async getSessionById(
     request: FastifyRequest,
     sessionId: string,
-  ): Promise<AttendanceSession | null> {
+  ): Promise<(AttendanceSession & { gps_history_pruned: boolean }) | null> {
     const { data, error } = await orgTable(request, "attendance_sessions")
-      .select("id, employee_id, organization_id, checkin_at, checkout_at, distance_recalculation_status, total_distance_km, total_duration_seconds, created_at, updated_at")
+      .select("id, employee_id, organization_id, checkin_at, checkout_at, distance_recalculation_status, total_distance_km, total_duration_seconds, created_at, updated_at, gps_history_pruned")
       .eq("id", sessionId)
       .single();
 
@@ -465,7 +418,7 @@ export const attendanceRepository = {
     if (error) {
       throw new Error(`Failed to fetch session: ${error.message}`);
     }
-    return data as AttendanceSession;
+    return data as AttendanceSession & { gps_history_pruned: boolean };
   },
 
   /**
@@ -516,6 +469,7 @@ export const attendanceRepository = {
         .select("id, created_at, distance_recalculation_status")
         .not("checkout_at", "is", null)
         .in("distance_recalculation_status", ["pending", "failed"])
+        .eq("gps_history_pruned", false)
         .order("created_at", { ascending: false })
         .range(offset, offset + PAGE_SIZE - 1);
 

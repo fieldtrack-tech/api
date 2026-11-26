@@ -83,4 +83,6 @@ export interface LocationListResponse {
 export interface LocationBatchResponse {
     success: true;
     inserted: number;
+    discarded_recorded_at?: string[];
+    session_closed?: true;
 }

@@ -158,12 +158,10 @@ jobs:
             exit 1
           fi
           echo "✅ Production boundary verified: @fastify/jwt is not in prod"
-          
-          # Audit only for CRITICAL severity in production dependencies
-          # Fast-jwt CVE is in dev-only @fastify/jwt (test server only)
-          # Production uses jsonwebtoken + JWKS (ES256 enforced, not vulnerable)
-          npm audit --omit=dev --audit-level=critical || echo "⚠️ Known CVE-2023-48223 (fast-jwt, test-only, mitigated by architecture)"
-          echo "✅ Audit check complete"
+          npm audit --omit=dev --audit-level=high
+      - name: Replay forward migrations in isolated PostgreSQL
+        if: needs.detect-changes.outputs.api == 'true'
+        run: node scripts/test-migration-replay.mjs
       - name: Tests (unit + integration)
         if: needs.detect-changes.outputs.api == 'true'
         run: npm test

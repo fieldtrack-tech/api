@@ -2,6 +2,43 @@
 
 All significant changes to FieldTrack 2.0 are documented here by development phase.
 
+Older phase entries are historical, not the current runtime or deployment
+contract. Use the current README and `docs/API_REFERENCE.md` for active behavior.
+
+## [Unreleased] — Local company field operations and documentation audit — 2026-11-24
+
+### FT-001 — Service-only RPC permission repair (local, not deployed)
+
+- Added forward permission-only migration
+  `20261124000200_rpc_permissions_hardening.sql`; historical migrations/data and
+  function bodies were not rewritten. Known backend RPCs, including every
+  installed overload, now deny PUBLIC/anon/authenticated execution when applied.
+- Preserved service-role backend calls and the Supabase Auth admin's exclusive
+  JWT-hook permission; unrelated existing utilities and extension routines are
+  not included. Hardened future function execution defaults for the DDL owner.
+- Added pinned **dev-only** PGlite and 10 actual PostgreSQL regression tests to
+  the normal Vitest suite. They reproduce the old leak and verify the repair,
+  inherited roles, service operations, hook claims and repeat application.
+- Verification: **562 API tests**, build, source typecheck and lint passed.
+  Broader test-config/old fixture type errors remain deferred; the new test's
+  standalone strict typecheck passed. No staging/production grants were changed.
+
+### Earlier local feature/audit work
+
+- Camera/GPS attendance now uses a one-use upload challenge, private selfie
+  storage, GPS EXIF validation and a visible GPS/accuracy/IST timestamp footer.
+- Added preset sites, distance-qualified repeat visits, historical visit rates,
+  employee effective-month basic pay and weekly/monthly reporting/CSV export.
+- Updated Android camera/earnings flows and the web Field & Payroll/My Earnings
+  views. Company setup uses INR and IST (UTC+05:30).
+- Audited all existing first-party Markdown documentation across the workspace
+  and corrected current contracts, health semantics, setup and testing claims.
+- Local checks: 552 API tests; web production build and 11 selfie helper tests;
+  Android compilation. Android unit-test task has no test sources.
+- No production migration/deploy or application bug fixes were performed by the
+  documentation audit. Dependency, queue, migration, synchronization and security
+  gaps remain outstanding; green local tests do not close those gaps.
+
 ---
 
 ## [Post-Phase-20] — Reliability Audit, Node 24 Upgrade & OTel 2.x — 2026

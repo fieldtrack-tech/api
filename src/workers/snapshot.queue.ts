@@ -112,6 +112,10 @@ function getSnapshotFailedQueue(): Queue<SnapshotFailedJobData, void, "dead-lett
   return _snapshotFailedQueue;
 }
 
+export async function getSnapshotQueueDepth(): Promise<number> {
+  return getSnapshotQueue().getWaitingCount();
+}
+
 // ─── Dead-Letter Helper ───────────────────────────────────────────────────────
 
 export async function moveSnapshotToDeadLetter(
@@ -136,14 +140,14 @@ export async function moveSnapshotToDeadLetter(
 export async function enqueueCheckIn(data: Omit<CheckInJobData, "type">): Promise<void> {
   const full: CheckInJobData = { type: "CHECK_IN", ...data };
   await getSnapshotQueue().add("snapshot", full, {
-    jobId: `checkin:${data.sessionId}`,
+    jobId: `checkin-${data.sessionId}`,
   });
 }
 
 export async function enqueueCheckOut(data: Omit<CheckOutJobData, "type">): Promise<void> {
   const full: CheckOutJobData = { type: "CHECK_OUT", ...data };
   await getSnapshotQueue().add("snapshot", full, {
-    jobId: `checkout:${data.sessionId}`,
+    jobId: `checkout-${data.sessionId}`,
   });
 }
 
@@ -157,7 +161,7 @@ export async function enqueueLocationUpdate(
 ): Promise<void> {
   const full: LocationUpdateJobData = { type: "LOCATION_UPDATE", ...data };
   await getSnapshotQueue().add("snapshot", full, {
-    jobId: `loc:${data.sessionId}:${data.recordedAt}`,
+    jobId: `loc-${data.sessionId}-${Date.parse(data.recordedAt)}`,
   });
 }
 
@@ -166,7 +170,7 @@ export async function enqueueExpenseCreated(
 ): Promise<void> {
   const full: ExpenseCreatedJobData = { type: "EXPENSE_CREATED", ...data };
   await getSnapshotQueue().add("snapshot", full, {
-    jobId: `exp-created:${data.expenseId}`,
+    jobId: `exp-created-${data.expenseId}`,
   });
 }
 
@@ -183,6 +187,6 @@ export async function enqueueExpenseResolved(
     amount: data.amount,
   };
   await getSnapshotQueue().add("snapshot", full, {
-    jobId: `exp-resolved:${data.expenseId}`,
+    jobId: `exp-resolved-${data.expenseId}`,
   });
 }

@@ -20,8 +20,8 @@ export const locationsController = {
     async recordLocationBatch(request: FastifyRequest, reply: FastifyReply): Promise<void> {
         try {
             const parsedBody = createLocationBatchSchema.parse(request.body);
-            const inserted = await locationsService.recordLocationBatch(request, parsedBody);
-            reply.status(201).send({ success: true, inserted });
+            const result = await locationsService.recordLocationBatch(request, parsedBody);
+            reply.status(201).send({ success: true, ...result });
         } catch (error) {
             handleError(error, request, reply, "Unexpected error ingesting location batch");
         }

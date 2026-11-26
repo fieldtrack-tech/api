@@ -1,5 +1,8 @@
 # Rollback System Quick Reference
 
+Reviewed against `scripts/deploy.sh` on 2026-11-24. Commands below change the VPS;
+none were executed during the local audit. Image rollback does not undo SQL.
+
 ## Commands
 
 ### Deploy Latest Version
@@ -29,7 +32,7 @@ cd "$HOME/api"
 1. Every successful deployment prepends image SHA to `.deploy_history`
 2. History maintains last 5 deployments (newest first)
 3. Rollback reads line 2 from `.deploy_history` and redeploys that image
-4. Blue-green deployment ensures zero downtime
+4. The old API slot remains until the replacement passes health checks; proxy/infra behavior must be considered separately
 5. Health checks validate before switching traffic
 
 ## Deployment Flow
@@ -42,8 +45,8 @@ cd "$HOME/api"
        │
        ▼
 ┌──────────────────┐
-│ deploy-blue      │
-│ green.sh <SHA>   │
+│ scripts/         │
+│ deploy.sh <SHA>  │
 └──────┬───────────┘
        │
        ▼
@@ -84,30 +87,33 @@ cd "$HOME/api"
        │
        ▼
 ┌──────────────────┐
-│ deploy-blue      │
-│ green.sh <SHA>   │
+│ scripts/         │
+│ deploy.sh <SHA>  │
 └──────────────────┘
 ```
 
 ## Safety Features
 
 - ✅ Interactive confirmation before rollback
-- ✅ Health check validation (20 attempts × 3s)
+- ✅ Health validation (40 HTTP attempts, 3–5 s jitter plus separate Docker checks)
 - ✅ Nginx config validation before reload
 - ✅ Automatic cleanup on failure
-- ✅ Zero downtime blue-green deployment
+- ✅ Blue-green API slot replacement; not a workspace-wide zero-downtime guarantee
 - ✅ Immutable image SHAs
 
 ## File Locations
 
 ```
-/api/
+$DEPLOY_ROOT/                 # defaults to $HOME/api
 ├── scripts/
 │   └── deploy.sh           # Deploy and rollback
 └── .deploy_history (last 5 SHAs)
 ```
 
 ## Example Session
+
+Illustrative output/timings only; the current script does not print this full
+history table and actual recovery duration varies with image/health checks.
 
 ```bash
 # Deploy new version
@@ -148,9 +154,13 @@ Production is now running: a4f91c2
 
 ## Performance
 
-- **Rollback time:** <10 seconds
-- **Health check:** Up to 60 seconds
-- **Zero downtime:** Always maintained
+- **Rollback time:** variable; no sub-10-second guarantee.
+- **Health check:** up to 40 HTTP attempts plus probe time, Docker health and stabilization.
+- **Proxy caveat:** watchdog sync skips nginx recreation for unchanged healthy
+  routing. Coordinate routing changes with the API deployment process.
+
+Before a release or rollback, verify schema and client compatibility and keep
+database backups. Historical operator SQL is under `supabase/manual/`.
 
 ## Related Docs
 

@@ -176,7 +176,7 @@ describe("expensesService.updateExpenseStatus()", () => {
 describe("expensesService.createExpense()", () => {
   it("returns the newly created expense", async () => {
     vi.mocked(expensesRepository.createExpense).mockResolvedValue(
-      pendingExpense as never,
+      { expense: pendingExpense as never, created: true },
     );
     // Pass employeeId on the request (normally set by auth middleware)
     const request = makeFakeRequest("EMPLOYEE", EMPLOYEE_ID);
@@ -189,7 +189,7 @@ describe("expensesService.createExpense()", () => {
 
   it("calls createExpense with the authenticated employee id from request", async () => {
     vi.mocked(expensesRepository.createExpense).mockResolvedValue(
-      pendingExpense as never,
+      { expense: pendingExpense as never, created: true },
     );
     const request = makeFakeRequest("EMPLOYEE", EMPLOYEE_ID);
     await expensesService.createExpense(request, {

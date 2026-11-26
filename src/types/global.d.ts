@@ -15,6 +15,7 @@ declare module "fastify" {
         organizationId: string; // Tenant context
         employeeId?: string; // employees.id resolved from users.id at auth time (undefined for ADMINs)
         authType?: "jwt" | "api_key";
+        authExpiresAt?: number;
         apiKeyId?: string;
         apiKeyScopes?: ApiKeyScope[];
         // Phase 18: Internal Fastify property for matched route pattern.

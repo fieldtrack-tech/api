@@ -44,6 +44,10 @@ export type OrgScopedTable = Extract<
   | "webhook_deliveries"
   | "webhook_events"
   | "webhooks"
+  | "field_settings"
+  | "field_sites"
+  | "employee_basic_pay"
+  | "attendance_selfie_challenges"
 >;
 
 export function orgTable(

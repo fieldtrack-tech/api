@@ -133,55 +133,18 @@ async function recomputeMetricsSnapshot(
 
 // ─── Job Handlers ─────────────────────────────────────────────────────────────
 
+async function refreshEmployeeTracking(data: { employeeId: string; organizationId: string }): Promise<void> {
+  const { error } = await supabase.rpc("refresh_employee_tracking", {
+    p_org: data.organizationId, p_employee: data.employeeId,
+  });
+  if (error) throw new Error(`Failed to refresh employee tracking: ${error.message}`);
+}
+
 async function handleCheckIn(
   data: Extract<SnapshotJobData, { type: "CHECK_IN" }>,
   app: FastifyInstance,
 ): Promise<void> {
-  // 1. Upsert employee_last_state: is_checked_in = true
-  const { error: stateErr } = await supabase
-    .from("employee_last_state")
-    .upsert(
-      {
-        employee_id:      data.employeeId,
-        organization_id:  data.organizationId,
-        last_session_id:  data.sessionId,
-        is_checked_in:    true,
-        last_check_in_at: data.checkinAt,
-        updated_at:       new Date().toISOString(),
-      },
-      { onConflict: "employee_id" },
-    );
-
-  if (stateErr) {
-    throw new Error(`snapshot-worker [CHECK_IN] state upsert failed: ${stateErr.message}`);
-  }
-
-  // 2. Insert into active_users (upsert: re-check_in replaces stale session)
-  // ⚠️  SAFETY: Do NOT remove the active_users table or this write without first
-  // confirming zero direct Supabase client reads via pg_stat_user_tables in
-  // production (SELECT seq_scan, idx_scan FROM pg_stat_user_tables WHERE
-  // relname = 'active_users').  RLS policies allow employee-self + admin reads
-  // that are invisible to static code analysis.
-  const { error: activeErr } = await supabase
-    .from("active_users")
-    .upsert(
-      {
-        employee_id:     data.employeeId,
-        organization_id: data.organizationId,
-        session_id:      data.sessionId,
-        last_seen_at:    new Date().toISOString(),
-      },
-      { onConflict: "employee_id" },
-    );
-
-  if (activeErr) {
-    throw new Error(`snapshot-worker [CHECK_IN] active_users upsert failed: ${activeErr.message}`);
-  }
-
-  // 3. Recompute cumulative metrics (total_sessions will now reflect the new session
-  //    once the analytics worker has processed the daily_metrics row).
-  //    We still call it here for last_active_at update; total_sessions will be
-  //    accurate once analytics is done (within ~15 s after checkout).
+  await refreshEmployeeTracking(data);
   await recomputeMetricsSnapshot(data.employeeId, data.organizationId, app);
 }
 
@@ -189,87 +152,8 @@ async function handleCheckOut(
   data: Extract<SnapshotJobData, { type: "CHECK_OUT" }>,
   app: FastifyInstance,
 ): Promise<void> {
-  // 1. Update employee_last_state: is_checked_in = false
-  const { error: stateErr } = await supabase
-    .from("employee_last_state")
-    .upsert(
-      {
-        employee_id:       data.employeeId,
-        organization_id:   data.organizationId,
-        last_session_id:   data.sessionId,
-        is_checked_in:     false,
-        last_check_out_at: data.checkoutAt,
-        updated_at:        new Date().toISOString(),
-      },
-      { onConflict: "employee_id" },
-    );
-
-  if (stateErr) {
-    throw new Error(`snapshot-worker [CHECK_OUT] state upsert failed: ${stateErr.message}`);
-  }
-
-  // 2. Remove from active_users
-  // ⚠️  SAFETY: See CHECK_IN handler above — do not remove active_users writes.
-  const { error: deleteErr } = await supabase
-    .from("active_users")
-    .delete()
-    .eq("employee_id", data.employeeId)
-    .eq("session_id", data.sessionId);
-
-  if (deleteErr) {
-    // Non-fatal: row may already be gone from a previous attempt
-    app.log.warn(
-      { employeeId: data.employeeId, sessionId: data.sessionId, error: deleteErr.message },
-      "snapshot-worker [CHECK_OUT]: active_users delete error (non-fatal)",
-    );
-  }
-
-  // 3. Recompute cumulative metrics.
-  //    The analytics worker (10 s delay) will have updated employee_daily_metrics
-  //    before this job typically runs.  If not, BullMQ retries with backoff,
-  //    ensuring eventually-consistent totals.
+  await refreshEmployeeTracking(data);
   await recomputeMetricsSnapshot(data.employeeId, data.organizationId, app);
-}
-
-async function handleLocationUpdate(
-  data: Extract<SnapshotJobData, { type: "LOCATION_UPDATE" }>,
-  app: FastifyInstance,
-): Promise<void> {
-  // 1. Update employee_last_state with latest GPS fix
-  const { error: stateErr } = await supabase
-    .from("employee_last_state")
-    .upsert(
-      {
-        employee_id:      data.employeeId,
-        organization_id:  data.organizationId,
-        last_latitude:    data.latitude,
-        last_longitude:   data.longitude,
-        last_location_at: data.recordedAt,
-        updated_at:       new Date().toISOString(),
-      },
-      { onConflict: "employee_id" },
-    );
-
-  if (stateErr) {
-    throw new Error(
-      `snapshot-worker [LOCATION_UPDATE] state upsert failed: ${stateErr.message}`,
-    );
-  }
-
-  // 2. Update last_seen_at in active_users (heartbeat)
-  const { error: activeErr } = await supabase
-    .from("active_users")
-    .update({ last_seen_at: data.recordedAt })
-    .eq("employee_id", data.employeeId)
-    .eq("session_id", data.sessionId);
-
-  if (activeErr) {
-    // Non-fatal: employee may have checked out between location write and this job.
-    app.log.warn(
-      { employeeId: data.employeeId, sessionId: data.sessionId, error: activeErr.message },
-      "snapshot-worker [LOCATION_UPDATE]: active_users heartbeat error (non-fatal)",
-    );
-  }
 }
 
 async function handleExpenseCreated(
@@ -343,7 +227,7 @@ export function startSnapshotWorker(app: FastifyInstance): void {
           await handleCheckOut(data, app);
           break;
         case "LOCATION_UPDATE":
-          await handleLocationUpdate(data, app);
+          await refreshEmployeeTracking(data);
           break;
         case "EXPENSE_CREATED":
           await handleExpenseCreated(data, app);

@@ -142,7 +142,7 @@ describe("Expenses Integration Tests", () => {
 
     it("returns 201 with created expense on valid submission", async () => {
       vi.mocked(expensesRepository.createExpense).mockResolvedValue(
-        pendingExpense as never,
+        { expense: pendingExpense as never, created: true },
       );
 
       const res = await app.inject({

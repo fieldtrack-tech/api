@@ -48,11 +48,12 @@ export const expensesService = {
     requireEmployeeContext(request);
     const employeeId = request.employeeId;
 
-    const expense = await expensesRepository.createExpense(
+    const { expense, created } = await expensesRepository.createExpense(
       request,
       employeeId,
       body,
     );
+    if (!created) return expense;
 
     // Update last_activity_at (fire-and-forget)
     profileRepository.updateLastActivity(request, employeeId).catch(() => {});

@@ -192,6 +192,9 @@ export const sessionSummaryService = {
     if (!session) {
       throw new NotFoundError("Attendance session not found");
     }
+    if (session.gps_history_pruned) {
+      throw new BadRequestError("This session's GPS history has expired. Its saved summary is still available.");
+    }
 
     // 2. Guard: reject sessions with abnormal durations before streaming starts
     const durationSeconds = validateSessionDuration(
@@ -308,7 +311,7 @@ export const sessionSummaryService = {
     // 1. Fetch session data via service role (worker has no tenant context yet)
     const { data: sessionData, error: sessionErr } = await supabase
       .from("attendance_sessions")
-      .select("id, employee_id, organization_id, checkin_at, checkout_at")
+      .select("id, employee_id, organization_id, checkin_at, checkout_at, total_distance_km, total_duration_seconds, gps_history_pruned")
       .eq("id", sessionId)
       .single();
 
@@ -316,6 +319,13 @@ export const sessionSummaryService = {
       throw new NotFoundError(
         `Worker: attendance session not found — id=${sessionId}`,
       );
+    }
+    if (sessionData.gps_history_pruned) {
+      return {
+        session_id: sessionId,
+        total_distance_km: Number(sessionData.total_distance_km ?? 0),
+        total_duration_seconds: Number(sessionData.total_duration_seconds ?? 0),
+      };
     }
 
     // 2. Guard: reject sessions with abnormal durations before streaming starts

@@ -29,6 +29,9 @@ vi.mock("../../../src/workers/distance.queue.js", () => ({
 vi.mock("../../../src/workers/analytics.queue.js", () => ({
   enqueueAnalyticsJob: vi.fn().mockResolvedValue(undefined),
 }));
+vi.mock("../../../src/modules/attendance/attendance-selfie.service.js", () => ({
+  attendanceSelfieService: { validate: vi.fn().mockResolvedValue(undefined) },
+}));
 
 // Import AFTER mocks are declared so they receive mock implementations
 import { attendanceService } from "../../../src/modules/attendance/attendance.service.js";
@@ -52,6 +55,8 @@ function makeFakeRequest(employeeId: string | undefined): FastifyRequest {
     user: { sub: USER_ID, role: "EMPLOYEE", organization_id: ORG_ID },
     organizationId: ORG_ID,
     employeeId,
+    body: { challenge_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", latitude: 19, longitude: 73,
+      accuracy: 10, captured_at: new Date().toISOString(), location_at: new Date().toISOString() },
     id: "test-req-id",
     log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   } as unknown as FastifyRequest;
@@ -101,6 +106,7 @@ describe("attendanceService.checkIn()", () => {
     expect(attendanceRepository.createSession).toHaveBeenCalledWith(
       expect.anything(),
       USER_ID,
+      expect.objectContaining({ latitude: 19, longitude: 73 }),
     );
   });
 

@@ -1,6 +1,8 @@
 # FieldTrack API — Environment Variable Contract
 
-> **Single source of truth for all environment variables across every layer of the system.**
+> Source-aligned reference audited 2026-11-24. `src/config/env.ts` is the executable
+> API schema; templates/workflows and the web/Android/infra configuration must be
+> checked separately rather than assumed synchronized.
 >
 > When in doubt about a variable's name, type, or where it belongs — read this document first.
 
@@ -35,8 +37,10 @@
 | `*_BASE_URL` | Full URL — scheme + host, **no trailing slash** | `https://api.getfieldtrack.app` |
 | `*_HOSTNAME` | Bare domain — **no scheme, no path** | `api.getfieldtrack.app` |
 
-**`API_HOSTNAME` is always DERIVED from `API_BASE_URL` at deploy-time by the deployment workflow/script.**  
-It must **never** be set in `.env` — set it only in the infra repository's `.env.monitoring`.
+API deploy derives `API_HOSTNAME` from `API_BASE_URL` for rendering. Standalone
+infra scripts require `API_HOSTNAME` to be exported or supplied in their own
+`.env.monitoring`; they do not load the API's `.env`. Use the same hostname in
+both layers. Runtime defaults remain local to each repository.
 
 ---
 
@@ -49,17 +53,16 @@ Validated by `src/config/env.ts` (Zod schema, fail-fast).
 | Variable | Required in Prod | Type | Purpose |
 |----------|:---:|------|---------|
 | `API_BASE_URL` | ✅ | `https://…` URL | **The canonical public URL of this API.** Used in OpenAPI server definitions and any server-generated links referencing the API itself. Also used by deploy scripts and CI health checks. |
-| `APP_BASE_URL` | ✅ | `https://…` URL | Canonical root URL for the whole application. Used in email footers, OpenGraph canonical tags, and generic redirects that don't need to distinguish API vs frontend. |
-| `FRONTEND_BASE_URL` | ✅ | `https://…` URL | Public URL of the web frontend (maintained in a separate repository: `fieldtrack-tech/web`). Used to build password-reset and invitation email links. |
+| `APP_BASE_URL` | ✅ | Absolute URL | Canonical application URL, currently validated/logged as configuration. |
+| `FRONTEND_BASE_URL` | ✅ | Absolute URL | Public web URL, currently validated/logged; password-reset/invitation endpoints are not implemented. |
 
 #### `FRONTEND_BASE_URL` — Usage Contract
 
 `FRONTEND_BASE_URL` is the **single canonical variable** for the frontend URL. There are no aliases.
 
-**Used for:**
-- Password-reset email links: `${FRONTEND_BASE_URL}/reset-password?token=…`
-- Invitation email links: `${FRONTEND_BASE_URL}/accept-invite?token=…`
-- User-facing redirects that land the user in the web UI
+**Current use:** startup validation, configuration logging and public config
+metadata. Email/invitation URL comments describe intended future consumers,
+not working `/reset-password` or `/accept-invite` flows in this checkout.
 
 **NOT used for:**
 - CORS allowed-origin configuration (use `CORS_ORIGIN`)
@@ -67,7 +70,8 @@ Validated by `src/config/env.ts` (Zod schema, fail-fast).
 - Internal service-to-service calls
 
 **Validation rules (enforced at startup by Zod):**
-- Must be a valid absolute URL (`http://` or `https://`)
+- Must be a valid absolute URL. Use HTTP/S for supported deployments and HTTPS
+  in production; the URL schema itself does not enforce HTTPS.
 - Must **not** end with a trailing slash — trailing slashes are stripped automatically and asserted by schema refine
 - Optional outside production; **required in production** — startup fails if absent when `APP_ENV=production`
 - No fallback — if the value is missing in production, the process exits with a clear error
@@ -76,10 +80,11 @@ Validated by `src/config/env.ts` (Zod schema, fail-fast).
 
 | Variable | Required | Default | Purpose |
 |----------|:---:|---------|---------|
-| `CONFIG_VERSION` | ✅ | `"1"` | Schema version guard — must be `"1"`. Bumped when the env schema has a breaking change. |
+| `CONFIG_VERSION` | Production explicit | `"1"` outside production | Must be exactly `"1"`; production cannot rely on the default. |
 | `APP_ENV` | ✅ | `development` | Canonical application environment. Drive ALL app-level logic from this. Falls back to `NODE_ENV`. |
 | `NODE_ENV` | — | `development` | Kept for npm/Node ecosystem compatibility only. **Never use for app logic.** |
-| `PORT` | ✅ | `3000` | Internal container listen port (1000–65535). |
+| `PORT` | — | `3000` | Validated range 1000–65535. Production Docker/deploy probes are fixed to 3000; local API development may use 3001 to avoid the web app's port 3000. |
+| `WORKERS_ENABLED` | Production explicit true | `false` | Zod infrastructure flag. Accepts true/1; workers also skip when APP_ENV or NODE_ENV is test. |
 
 ### Auth & Data
 
@@ -88,7 +93,7 @@ Validated by `src/config/env.ts` (Zod schema, fail-fast).
 | `SUPABASE_URL` | ✅ | Supabase project URL |
 | `SUPABASE_ANON_KEY` | ✅ | Supabase public/anon key (safe for browser) |
 | `SUPABASE_SERVICE_ROLE_KEY` | ✅ | Service role key — bypasses RLS. **Never expose to clients.** |
-| `SUPABASE_JWT_SECRET` | ✅ | JWT signing secret (≥ 32 chars, HS256). Used by `@fastify/jwt` in tests. |
+| `SUPABASE_JWT_SECRET` | Test harness only | Not in the API environment schema. Test JWT signing uses fake HS256 credentials; runtime verification uses ES256/JWKS. |
 | `REDIS_URL` | ✅ | Redis connection URL (`redis://` or `rediss://`) |
 
 ### Security & Observability
@@ -112,13 +117,24 @@ Validated by `src/config/env.ts` (Zod schema, fail-fast).
 | `MAX_SESSION_DURATION_HOURS` | `168` | Sessions older than this (hours) are skipped as anomalies. |
 | `WORKER_CONCURRENCY` | `1` | Distance worker job concurrency per replica. |
 | `ANALYTICS_WORKER_CONCURRENCY` | `5` | Analytics worker job concurrency (1–50). |
+| `WEBHOOK_WORKER_CONCURRENCY` | `5` | Webhook concurrency, 1–20. |
+| `WEBHOOK_MAX_PAYLOAD_BYTES` | `262144` | Outbound webhook payload cap, 16384–1000000 bytes. |
+| `WEBHOOK_DLQ_MAX_SIZE` | `10000` | Webhook dead-letter queue capacity. |
+| `WEBHOOK_DLQ_RETENTION_DAYS` | `30` | Archive/purge window, 14–30 days. |
 
-### CI-only Flags (not in Zod schema)
+`REQUEST_TIMEOUT_MS` is passed as Fastify `connectionTimeout`; it is not an
+end-to-end deadline for Supabase calls or readiness probes. Direct image uploads
+go to Storage, so their 5 MB limit is separate from the API JSON body limit.
+
+### Tooling-only variables (not API business configuration)
 
 | Variable | Purpose |
 |----------|---------|
-| `WORKERS_ENABLED` | Set to `"false"` in CI/test to disable BullMQ workers (Redis not required). Default `"true"` in production. |
 | `CI` | Auto-set by GitHub Actions. Used for logging only. |
+| `FIELDTRACK_PGLITE_MODULE` | File URL/package import for isolated SQL verification; not used by the API server. |
+
+Disabling workers uses in-memory rate limiting and omits queue-management routes.
+It does not make all readiness or queue business paths independent of Redis.
 
 ---
 
@@ -231,6 +247,15 @@ DO_SSH_KEY=<pem private key>
 ---
 
 ## Migration Notes
+
+Company currency/timezone are database settings, not environment variables:
+INR / IST (UTC+05:30, `Asia/Kolkata`) defaults, confirmed from the admin dashboard.
+Warehouse rates/radii and employee basic pay also live in database tables.
+
+Web configuration uses `NEXT_PUBLIC_API_BASE_URL`, `NEXT_PUBLIC_SUPABASE_URL`,
+`NEXT_PUBLIC_SUPABASE_ANON_KEY` and server-only `API_DESTINATION_URL` in proxy mode.
+Android uses `API_BASE_URL` in `local.properties` for debug builds; release uses
+the build script's production URL. Never place a service-role key in either client.
 
 The following variables were **renamed** as part of the env contract cleanup (March 2026):
 

@@ -91,7 +91,7 @@ export async function moveToDeadLetter(
  * Enqueue an analytics aggregation job for the given session.
  *
  * Idempotent: duplicate calls for the same sessionId are silently ignored by
- * BullMQ because the jobId is deterministic (analytics:<sessionId>).
+ * BullMQ because the jobId is deterministic for the session.
  *
  * The 10 s delay (inherited from defaultJobOptions) is intentional: it ensures
  * the distance worker has finished writing total_distance_km before the analytics
@@ -117,7 +117,7 @@ export async function enqueueAnalyticsJob(
   await queue.add(
     "update-metrics",
     { sessionId, organizationId, employeeId },
-    { jobId: `analytics:${sessionId}` },
+    { jobId: `analytics-${sessionId}` },
   );
 }
 

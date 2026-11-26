@@ -20,6 +20,10 @@ DO $$
 DECLARE
   v_org_id UUID := 'a0000001-f001-4000-8000-000000000001';
 BEGIN
+  -- This historical repair applies only to the original test organization.
+  IF NOT EXISTS (SELECT 1 FROM public.organizations WHERE id = v_org_id) THEN
+    RETURN;
+  END IF;
   -- Personal developer account (rajashish147@gmail.com) -- ADMIN
   INSERT INTO public.users (id, organization_id, email, role)
   VALUES (

@@ -12,7 +12,7 @@ cd api
 
 npm install
 cp .env.example .env
-# Edit .env — fill in Supabase URL, keys, Redis URL, ALLOWED_ORIGINS
+# Edit .env — fill in Supabase URL, keys, Redis URL, CORS_ORIGIN
 ```
 
 ---
@@ -28,6 +28,9 @@ cp .env.example .env
 | Chores / deps | `chore/<description>` | `chore/bump-fastify-5` |
 
 All PRs target `master`. `master` is protected — CI must pass before merge.
+
+Documentation source audit: 2026-11-24. Branch protection is an operator setting;
+the repository's workflow files alone do not establish its live configuration.
 
 ---
 
@@ -94,7 +97,9 @@ chore(deps): bump @fastify/jwt to 9.1.0
 
 ### Module Pattern
 
-Every domain module follows the same four-layer pattern:
+Most domain modules use the following layers. Compact modules such as field
+operations register handlers directly in the route file; follow the neighboring
+code rather than inventing empty controller/service layers.
 
 ```
 src/modules/<domain>/
@@ -107,7 +112,9 @@ src/modules/<domain>/
 
 ### Key Rules
 
-- **Never skip tenant scoping.** Every repository query must include `.eq("organization_id", organizationId)`.
+- **Never skip tenant scoping.** Use `orgTable` for reads/updates/deletes; explicitly
+  set organization on inserts and pass trusted tenant context to RPCs. Audit
+  function grants and SQL tenant checks as well as HTTP middleware.
 - **All errors must flow through `handleError()`.** Do not call `reply.status().send()` directly in service or repository code.
 - **Domain errors belong in `src/utils/errors.ts`.** Use specific error classes (`NotFoundError`, `ForbiddenError`, etc.) rather than generic ones.
 - **Use `TenantContext`** when writing service-layer code that runs outside an HTTP request (e.g. workers).
@@ -118,18 +125,32 @@ src/modules/<domain>/
 - Unit tests go in `tests/unit/`
 - Integration tests go in `tests/integration/`
 - Use `vi.mock()` at the top of integration test files to mock repository dependencies
-- Use `TEST_UUID()` from `tests/helpers/uuid.ts` for all UUID values in tests (Zod 4 enforces strict RFC-4122 validation)
-- Do not write tests that require a live Supabase project — mock at the repository level
+- Use `crypto.randomUUID()` or the valid RFC-4122 fixtures exported by
+  `tests/setup/test-server.ts`. The old `tests/helpers/uuid.ts` path no longer exists.
+- Keep default tests independent of live Supabase. Add isolated SQL tests when
+  behavior lives in a function/trigger; mocked repositories do not validate DDL,
+  PostgREST argument names, grants or real BullMQ job-option acceptance.
+- `tests/integration/rpc-permissions.test.ts` uses pinned dev-only PGlite and the
+  checked-in SQL function/repair definitions to verify FT-001 without mocks of
+  PostgreSQL permission behavior. Run it with
+  `npm test -- tests/integration/rpc-permissions.test.ts`.
 
 ---
 
 ## Pull Request Process
 
 1. Ensure `npx tsc --noEmit` exits `0`
-2. Ensure `npm run test` passes all 124+ tests
+2. Ensure `npm test` passes (552 at audit baseline; 562 after the FT-001 permission fix)
 3. Write tests for new behaviour — PRs without tests for new endpoints will not be merged
 4. Update [docs/API_REFERENCE.md](docs/API_REFERENCE.md) if you add or change any endpoint
 5. Update [CHANGELOG.md](CHANGELOG.md) with a short entry under the appropriate section
+
+Also run `npm run lint`. For camera, field-visit or payout changes, review
+`docs/FIELD_OPERATIONS.md`, the API/client contracts and the SQL verification
+script. Validate migrations in a disposable/staging database: never run a linked
+database reset as a routine development or deployment command. The current
+migration directory contains a destructive rollback artifact and duplicate version.
+Do not assume a green mocked test run certifies financial or production behavior.
 
 ---
 

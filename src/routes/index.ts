@@ -23,6 +23,8 @@ import { adminQueuesRoutes } from "../modules/admin/queues.routes.js";
 import { adminRetryIntentsRoutes } from "../modules/admin/retry-intents.routes.js";
 import { systemHealthRoutes } from "../modules/admin/system-health.routes.js";
 import { apiKeysRoutes } from "../modules/api-keys/api-keys.routes.js";
+import { fieldOperationsRoutes } from "../modules/field-operations/field-operations.routes.js";
+import { fieldArrivalRoutes } from "../modules/field-operations/field-arrival.routes.js";
 
 import { adminForceCheckoutRoutes } from "../modules/admin/force-checkout.routes.js";
 
@@ -33,6 +35,8 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   await app.register(authRoutes);
   await app.register(crashRoutes);
   await app.register(attendanceRoutes);
+  await app.register(fieldOperationsRoutes);
+  await app.register(fieldArrivalRoutes);
   await app.register(locationsRoutes);
   await app.register(expensesRoutes);
   await app.register(analyticsRoutes);

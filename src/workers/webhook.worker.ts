@@ -6,15 +6,15 @@
  *  2. Serialize the envelope to a stable JSON string.
  *  3. Generate timestamp-bound HMAC-SHA256 signature over `timestamp.raw_body`.
  *  4. Reject payloads above WEBHOOK_MAX_PAYLOAD_BYTES (move to DLQ).
- *  4. POST to the webhook URL with a 5 s timeout.
- *  5. On success → mark delivery as `success`.
- *  6. On failure → schedule a retry (exponential delays) up to MAX_ATTEMPTS.
+ *  5. POST to the webhook URL with a 5 s timeout.
+ *  6. On success → mark delivery as `success`.
+ *  7. On failure → schedule a retry (exponential delays) up to MAX_ATTEMPTS.
  *     After max attempts → mark delivery as `failed`.
  *
  * Security:
- *  - DNS rebinding defence: The hostname is resolved immediately before the
- *    HTTP request and checked against private IP ranges.
- *  - Request timeout enforced at 5 s.
+ *  - Connect only to a validated public address, with certificate validation
+ *    against the configured hostname.
+ *  - Bound response size and total delivery time.
  *  - Signature is HMAC-SHA256(secret, `${timestamp}.${rawBody}`), header: X-FieldTrack-Signature.
  *
  * Worker gate: `startWebhookWorker()` is only called when
@@ -24,11 +24,13 @@
 import { Worker } from "bullmq";
 import type { Job } from "bullmq";
 import type { FastifyInstance } from "fastify";
-import dns from "node:dns/promises";
+import { request } from "node:https";
+import type { IncomingMessage } from "node:http";
 import { Redis } from "ioredis";
 import { redisConnectionOptions, getRedisConnectionOptions } from "../config/redis.js";
 import { supabaseServiceClient as supabase } from "../config/supabase.js";
 import { generateSignatureWithTimestamp } from "../utils/hmac.js";
+import { lookupWebhookDestination, validateWebhookUrl } from "../utils/url-validator.js";
 import { subscribeToEventBus } from "./webhook-event.service.js";
 import {
   WEBHOOK_QUEUE_NAME,
@@ -92,28 +94,8 @@ function getCbRedis(): Redis {
   return _cbRedis;
 }
 
-// ─── Private IP ranges (DNS rebinding defence) ───────────────────────────────
-
-const PRIVATE_IP_PATTERNS: ReadonlyArray<RegExp> = [
-  /^127\./,
-  /^10\./,
-  /^172\.(1[6-9]|2\d|3[01])\./,
-  /^192\.168\./,
-  /^169\.254\./,
-  /^::1$/,
-  /^fc[0-9a-f]{2}:/i,
-  /^fe80:/i,
-  /^0\.0\.0\.0$/,
-];
-
-function isPrivateAddress(ip: string): boolean {
-  const lower = ip.toLowerCase();
-  return PRIVATE_IP_PATTERNS.some((re) => re.test(lower));
-}
-
-// ─── HTTP delivery ────────────────────────────────────────────────────────────
-
 const DELIVERY_TIMEOUT_MS = 5_000;
+const RESPONSE_CAPTURE_BYTES = 4_096;
 const WEBHOOK_PAYLOAD_MAX_BYTES = env.WEBHOOK_MAX_PAYLOAD_BYTES;
 
 /**
@@ -124,7 +106,7 @@ const WEBHOOK_PAYLOAD_MAX_BYTES = env.WEBHOOK_MAX_PAYLOAD_BYTES;
  *
  * Throws on network error, timeout, or SSRF block.
  */
-async function deliverWebhook(
+export async function deliverWebhook(
   url: string,
   rawBody: string,
   signature: string,
@@ -132,40 +114,17 @@ async function deliverWebhook(
   timestamp: number,
   deliveryId: string,
 ): Promise<{ status: number; body: string }> {
-  // ── DNS rebinding defence ──────────────────────────────────────────────────
-  const parsed = new URL(url);
-  let resolvedAddress: string;
-  try {
-    const { address } = await dns.lookup(parsed.hostname, { family: 4 });
-    resolvedAddress = address;
-  } catch {
-    // IPv6 fallback
-    try {
-      const { address } = await dns.lookup(parsed.hostname, { family: 6 });
-      resolvedAddress = address;
-    } catch {
-      throw new Error(`DNS lookup failed for hostname: ${parsed.hostname}`);
-    }
-  }
-
-  if (isPrivateAddress(resolvedAddress)) {
-    throw new Error(
-      `SSRF blocked: ${parsed.hostname} resolved to private address ${resolvedAddress}`,
-    );
-  }
-
-  // ── HTTP POST with timeout ─────────────────────────────────────────────────
-  const controller = new AbortController();
-  const timeoutHandle = setTimeout(
-    () => controller.abort(),
-    DELIVERY_TIMEOUT_MS,
-  );
-
-  try {
-    const response = await fetch(url, {
+  const parsed = validateWebhookUrl(url);
+  const response = await new Promise<IncomingMessage>((resolve, reject) => {
+    const outgoing = request(parsed, {
       method: "POST",
+      agent: false,
+      lookup: lookupWebhookDestination,
+      rejectUnauthorized: true,
+      signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
       headers: {
         "Content-Type":               "application/json",
+        "Content-Length":             Buffer.byteLength(rawBody),
         "X-FieldTrack-Signature":     signature,
         "X-Webhook-Signature":        signature,
         "X-FieldTrack-Event":         eventType,
@@ -174,18 +133,31 @@ async function deliverWebhook(
         "X-FieldTrack-Delivery-Id":   deliveryId,
         "User-Agent":                 "FieldTrack-Webhooks/1.0",
       },
-      body: rawBody,
-      // Never follow redirects — a redirect could point to an internal address
-      // that bypassed the SSRF DNS check performed above.
-      redirect: "error",
-      signal: controller.signal,
-    });
-
-    const body = await response.text().catch(() => "");
-    return { status: response.status, body: body.slice(0, 4_096) };
-  } finally {
-    clearTimeout(timeoutHandle);
+    }, resolve);
+    outgoing.once("error", reject);
+    outgoing.end(rawBody);
+  });
+  const status = response.statusCode ?? 0;
+  // node:https makes a single request and leaves redirect handling to callers.
+  if (status >= 300 && status < 400) {
+    response.destroy();
+    return { status, body: "" };
   }
+
+  const chunks: Buffer[] = [];
+  let captured = 0;
+  try {
+    for await (const chunk of response as AsyncIterable<Buffer>) {
+      const sample = chunk.subarray(0, RESPONSE_CAPTURE_BYTES - captured);
+      chunks.push(sample);
+      captured += sample.length;
+      if (captured === RESPONSE_CAPTURE_BYTES) break;
+    }
+  } catch {
+    // The response status decides whether to retry. A truncated diagnostic
+    // body does not make an acknowledged delivery fail.
+  }
+  return { status, body: Buffer.concat(chunks, captured).toString("utf8").replaceAll("\0", "") };
 }
 
 // ─── Delivery result handler ──────────────────────────────────────────────────

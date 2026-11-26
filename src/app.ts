@@ -25,7 +25,8 @@ import { apiKeysRepository } from "./modules/api-keys/api-keys.repository.js";
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
     logger: getLoggerConfig(env.APP_ENV),
-    trustProxy: true,
+    // Nginx appends its address of the client as the rightmost forwarded hop.
+    trustProxy: env.APP_ENV === "production" || env.APP_ENV === "staging" ? (_address, hop) => hop === 0 : false,
     // Phase 10: HTTP hardening (externalized limits)
     bodyLimit: env.BODY_LIMIT_BYTES,
     connectionTimeout: env.REQUEST_TIMEOUT_MS,

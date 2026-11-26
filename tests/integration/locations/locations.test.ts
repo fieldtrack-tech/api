@@ -15,28 +15,14 @@ vi.mock("../../../src/workers/analytics.queue.js", () => ({
   enqueueAnalyticsJob: vi.fn().mockResolvedValue(undefined),
 }));
 
-// locations.service.ts uses both repositories
+// Mock the GPS repository while exercising the HTTP route and auth middleware.
 vi.mock("../../../src/modules/locations/locations.repository.js", () => ({
   locationsRepository: {
-    createLocation: vi.fn(),
-    createLocationBatch: vi.fn(),
+    ingestLocationPoints: vi.fn(),
     findLocationsBySession: vi.fn(),
     findPointsForDistancePaginated: vi.fn(),
   },
 }));
-
-vi.mock("../../../src/modules/attendance/attendance.repository.js", () => ({
-  attendanceRepository: {
-    findOpenSession: vi.fn(),
-    createSession: vi.fn(),
-    closeSession: vi.fn(),
-    findSessionsByUser: vi.fn(),
-    findSessionsByOrg: vi.fn(),
-    validateSessionActive: vi.fn(),
-    getSessionCheckinAt: vi.fn(),
-  },
-}));
-
 // metrics are in-memory counters — mock to avoid prom-client cross-test noise
 vi.mock("../../../src/utils/metrics.js", () => ({
   metrics: {
@@ -65,7 +51,7 @@ import {
   TEST_SESSION_ID,
 } from "../../setup/test-server.js";
 import { locationsRepository } from "../../../src/modules/locations/locations.repository.js";
-import { attendanceRepository } from "../../../src/modules/attendance/attendance.repository.js";
+import { BadRequestError } from "../../../src/utils/errors.js";
 
 // ─── Shared fixtures ──────────────────────────────────────────────────────────
 
@@ -139,10 +125,7 @@ describe("Locations Integration Tests", () => {
     });
 
     it("returns 201 with the saved location record", async () => {
-      vi.mocked(attendanceRepository.validateSessionActive).mockResolvedValue(true);
-      vi.mocked(locationsRepository.createLocation).mockResolvedValue(
-        locationRecord as never,
-      );
+      vi.mocked(locationsRepository.ingestLocationPoints).mockResolvedValue({ inserted: [locationRecord], discarded_recorded_at: [], closed: false });
 
       const res = await app.inject({
         method: "POST",
@@ -161,7 +144,7 @@ describe("Locations Integration Tests", () => {
     });
 
     it("returns 400 when session is not active", async () => {
-      vi.mocked(attendanceRepository.validateSessionActive).mockResolvedValue(false);
+      vi.mocked(locationsRepository.ingestLocationPoints).mockRejectedValue(new BadRequestError("Invalid session", "LOCATION_SESSION_EXPIRED"));
 
       const res = await app.inject({
         method: "POST",
@@ -274,8 +257,7 @@ describe("Locations Integration Tests", () => {
     });
 
     it("returns 201 with inserted count on success", async () => {
-      vi.mocked(attendanceRepository.validateSessionActive).mockResolvedValue(true);
-      vi.mocked(locationsRepository.createLocationBatch).mockResolvedValue(2 as never);
+      vi.mocked(locationsRepository.ingestLocationPoints).mockResolvedValue({ inserted: [locationRecord, locationRecord], discarded_recorded_at: [], closed: false });
 
       const res = await app.inject({
         method: "POST",
@@ -323,7 +305,7 @@ describe("Locations Integration Tests", () => {
     });
 
     it("returns 400 when the session is not active", async () => {
-      vi.mocked(attendanceRepository.validateSessionActive).mockResolvedValue(false);
+      vi.mocked(locationsRepository.ingestLocationPoints).mockRejectedValue(new BadRequestError("Invalid session", "LOCATION_SESSION_EXPIRED"));
 
       const res = await app.inject({
         method: "POST",
@@ -341,13 +323,11 @@ describe("Locations Integration Tests", () => {
   // ─── H3: GPS timestamp / sequence validation ─────────────────────────────────
 
   describe("H3 — GPS data integrity validation", () => {
-    const SESSION_START = new Date(Date.now() - 60_000).toISOString(); // 1 min ago
     const BEFORE_SESSION = new Date(Date.now() - 120_000).toISOString(); // 2 min ago (before session)
     const AFTER_SESSION = new Date(Date.now() - 30_000).toISOString(); // 30 s ago (valid)
 
     it("POST /locations — rejects a point with recorded_at before session start (400)", async () => {
-      vi.mocked(attendanceRepository.validateSessionActive).mockResolvedValue(true);
-      vi.mocked(attendanceRepository.getSessionCheckinAt).mockResolvedValue(SESSION_START);
+      vi.mocked(locationsRepository.ingestLocationPoints).mockResolvedValue({ inserted: [], discarded_recorded_at: [BEFORE_SESSION], closed: false });
 
       const res = await app.inject({
         method: "POST",
@@ -370,9 +350,7 @@ describe("Locations Integration Tests", () => {
     });
 
     it("POST /locations — accepts a point with recorded_at after session start (201)", async () => {
-      vi.mocked(attendanceRepository.validateSessionActive).mockResolvedValue(true);
-      vi.mocked(attendanceRepository.getSessionCheckinAt).mockResolvedValue(SESSION_START);
-      vi.mocked(locationsRepository.createLocation).mockResolvedValue(locationRecord as never);
+      vi.mocked(locationsRepository.ingestLocationPoints).mockResolvedValue({ inserted: [locationRecord], discarded_recorded_at: [], closed: false });
 
       const res = await app.inject({
         method: "POST",
@@ -391,9 +369,8 @@ describe("Locations Integration Tests", () => {
       expect(res.statusCode).toBe(201);
     });
 
-    it("POST /locations/batch — rejects when a point is before session start (400)", async () => {
-      vi.mocked(attendanceRepository.validateSessionActive).mockResolvedValue(true);
-      vi.mocked(attendanceRepository.getSessionCheckinAt).mockResolvedValue(SESSION_START);
+    it("POST /locations/batch — keeps valid points and identifies outside-window fixes", async () => {
+      vi.mocked(locationsRepository.ingestLocationPoints).mockResolvedValue({ inserted: [locationRecord], discarded_recorded_at: [BEFORE_SESSION], closed: true });
 
       const res = await app.inject({
         method: "POST",
@@ -411,10 +388,8 @@ describe("Locations Integration Tests", () => {
         }),
       });
 
-      expect(res.statusCode).toBe(400);
-      const body = JSON.parse(res.body) as { success: false; error: string };
-      expect(body.success).toBe(false);
-      expect(body.error).toMatch(/before the session start/i);
+      expect(res.statusCode).toBe(201);
+      expect(res.json()).toEqual({ success: true, inserted: 1, discarded_recorded_at: [BEFORE_SESSION], session_closed: true });
     });
 
     it("POST /locations/batch — rejects out-of-order sequence_number (400, schema level)", async () => {
@@ -438,9 +413,7 @@ describe("Locations Integration Tests", () => {
     });
 
     it("POST /locations/batch — accepts monotonically increasing sequence_number (201)", async () => {
-      vi.mocked(attendanceRepository.validateSessionActive).mockResolvedValue(true);
-      vi.mocked(attendanceRepository.getSessionCheckinAt).mockResolvedValue(SESSION_START);
-      vi.mocked(locationsRepository.createLocationBatch).mockResolvedValue(2 as never);
+      vi.mocked(locationsRepository.ingestLocationPoints).mockResolvedValue({ inserted: [locationRecord, locationRecord], discarded_recorded_at: [], closed: false });
 
       const res = await app.inject({
         method: "POST",

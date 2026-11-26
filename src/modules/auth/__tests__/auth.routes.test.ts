@@ -7,14 +7,11 @@ import { authRoutes } from "../auth.routes.js";
 
 const mocks = vi.hoisted(() => ({
   signInWithPassword: vi.fn(),
+  refreshSession: vi.fn(),
 }));
 
 vi.mock("../../../config/supabase.js", () => ({
-  supabaseAnonClient: {
-    auth: {
-      signInWithPassword: mocks.signInWithPassword,
-    },
-  },
+  createSupabaseAuthClient: () => ({ auth: mocks }),
 }));
 
 async function buildAuthTestApp(): Promise<FastifyInstance> {
@@ -47,6 +44,7 @@ describe("Auth routes", () => {
 
   beforeEach(() => {
     mocks.signInWithPassword.mockReset();
+    mocks.refreshSession.mockReset();
   });
 
   it("POST /auth/login signs in with email/password and returns the token envelope", async () => {
@@ -112,5 +110,22 @@ describe("Auth routes", () => {
       error: "Invalid email or password",
       code: "INVALID_CREDENTIALS",
     });
+  });
+
+  it("exchanges a refresh token for the rotated session without caching it", async () => {
+    const session = { access_token: "new.access", refresh_token: "new.refresh", token_type: "bearer", expires_in: 3600 };
+    mocks.refreshSession.mockResolvedValue({ data: { session }, error: null });
+    const response = await app.inject({ method: "POST", url: "/auth/refresh", payload: { refresh_token: "old.refresh" } });
+    expect(mocks.refreshSession).toHaveBeenCalledWith({ refresh_token: "old.refresh" });
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.json()).toEqual({ success: true, data: { ...session, expires_at: null } });
+  });
+
+  it("distinguishes a retryable outage from an expired token", async () => {
+    const request = { method: "POST" as const, url: "/auth/refresh", payload: { refresh_token: "old.refresh" } };
+    mocks.refreshSession.mockResolvedValueOnce({ data: { session: null }, error: { status: 502 } })
+      .mockResolvedValueOnce({ data: { session: null }, error: { status: 400 } });
+    expect((await app.inject(request)).statusCode).toBe(503);
+    expect((await app.inject(request)).statusCode).toBe(401);
   });
 });

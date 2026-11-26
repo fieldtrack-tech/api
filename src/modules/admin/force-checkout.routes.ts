@@ -44,7 +44,7 @@ export async function adminForceCheckoutRoutes(app: FastifyInstance): Promise<vo
               checkin_at: z.string(),
               checkout_at: z.string().nullable(),
               total_distance_km: z.number().nullable(),
-              duration_seconds: z.number().nullable(),
+              total_duration_seconds: z.number().nullable(),
             }).describe("The closed session record"),
           }),
         },

@@ -26,22 +26,7 @@ interface MapMarkerRow {
 /**
  * GET /admin/monitoring/map
  *
- * Returns one marker per ACTIVE/RECENT employee who has at least one GPS point.
- * Uses the `get_active_map_markers` Postgres function which performs a single
- * DISTINCT ON join:
- *
- *   SELECT DISTINCT ON (g.employee_id)
- *     g.employee_id, g.latitude, g.longitude, g.recorded_at,
- *     e.name, e.employee_code, els.status, els.session_id
- *   FROM gps_locations g
- *   JOIN employee_latest_sessions els ON els.employee_id = g.employee_id ...
- *   JOIN employees e ON e.id = g.employee_id
- *   WHERE g.organization_id = ? AND els.status IN ('ACTIVE','RECENT')
- *   ORDER BY g.employee_id, g.recorded_at DESC
- *   LIMIT 1000
- *
- * This replaces the previous two-query approach (snapshot + IN-clause GPS)
- * which overflowed PostgREST URL limits at scale.
+ * Returns the latest GPS point from each active shift in the organization.
  */
 export async function adminMapRoutes(app: FastifyInstance): Promise<void> {
   app.get(
@@ -49,11 +34,11 @@ export async function adminMapRoutes(app: FastifyInstance): Promise<void> {
     {
       schema: {
         tags: ["admin"],
-        summary: "Live map markers for active/recent employees",
+        summary: "Live map markers for active shifts",
         description:
-          "Returns one GPS marker per ACTIVE or RECENT employee who has at least one recorded location. " +
-          "Uses a single DISTINCT ON join via the `get_active_map_markers` Postgres function. " +
-          "Capped at 1000 markers.",
+          "Returns the latest GPS position from each active shift. Filter by employeeId to follow a single employee. " +
+          "The fleet map is capped at 1000 markers.",
+        querystring: z.object({ employeeId: z.string().uuid().optional() }),
         response: {
           200: z.object({
             success: z.literal(true),
@@ -67,7 +52,7 @@ export async function adminMapRoutes(app: FastifyInstance): Promise<void> {
               longitude:    z.number(),
               recordedAt:   z.string().datetime({ offset: true }),
             })),
-          }).describe("Map markers for active/recent employees"),
+          }).describe("Map markers for active shifts"),
         },
       },
       preValidation: [authenticate, requireRole("ADMIN")],
@@ -75,13 +60,13 @@ export async function adminMapRoutes(app: FastifyInstance): Promise<void> {
     async (request, reply) => {
       try {
         const orgId = request.organizationId;
+        const { employeeId } = request.query as { employeeId?: string };
 
-        // Single DISTINCT ON join via Postgres function — O(active employees)
-        // with no large IN-clause; uses idx_latest_sessions_active partial index.
         const queryStart = Date.now();
         const { data, error } = await supabase.rpc("get_active_map_markers", {
           p_org_id: orgId,
-          p_limit: MAX_MAP_EMPLOYEES,
+          p_limit: employeeId ? 1 : MAX_MAP_EMPLOYEES,
+          ...(employeeId ? { p_employee_id: employeeId } : {}),
         });
         const durationMs = Date.now() - queryStart;
 

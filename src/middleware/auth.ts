@@ -147,6 +147,7 @@ export async function authenticate(
         request.organizationId = result.data.organization_id;
         request.employeeId     = hookEmployeeId ?? undefined;
         request.authType       = "jwt";
+        request.authExpiresAt  = decoded.exp === undefined ? undefined : decoded.exp * 1000;
         request.apiKeyId       = undefined;
         request.apiKeyScopes   = undefined;
 

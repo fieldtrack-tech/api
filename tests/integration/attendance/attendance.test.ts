@@ -25,6 +25,9 @@ vi.mock("../../../src/workers/distance.queue.js", () => ({
 vi.mock("../../../src/workers/analytics.queue.js", () => ({
   enqueueAnalyticsJob: vi.fn().mockResolvedValue(undefined),
 }));
+vi.mock("../../../src/modules/attendance/attendance-selfie.service.js", () => ({
+  attendanceSelfieService: { validate: vi.fn().mockResolvedValue(undefined), challenge: vi.fn(), view: vi.fn() },
+}));
 
 vi.mock("../../../src/modules/attendance/attendance.repository.js", () => ({
   attendanceRepository: {
@@ -82,6 +85,8 @@ const closedSession = {
   ...openSession,
   checkout_at: new Date().toISOString(),
 };
+const cameraBody = () => ({ challenge_id: TEST_SESSION_ID, latitude: 19, longitude: 73, accuracy: 10,
+  captured_at: new Date().toISOString(), location_at: new Date().toISOString() });
 
 // ─── Test suite ───────────────────────────────────────────────────────────────
 
@@ -120,6 +125,7 @@ describe("Attendance Integration Tests", () => {
         method: "POST",
         url: "/attendance/check-in",
         headers: { authorization: `Bearer ${employeeToken}` },
+        payload: cameraBody(),
       });
 
       expect(res.statusCode).toBe(201);
@@ -136,6 +142,7 @@ describe("Attendance Integration Tests", () => {
         method: "POST",
         url: "/attendance/check-in",
         headers: { authorization: `Bearer ${employeeToken}` },
+        payload: cameraBody(),
       });
 
       expect(attendanceRepository.upsertLatestSession).toHaveBeenCalledWith(
@@ -152,12 +159,19 @@ describe("Attendance Integration Tests", () => {
         method: "POST",
         url: "/attendance/check-in",
         headers: { authorization: `Bearer ${employeeToken}` },
+        payload: cameraBody(),
       });
 
       expect(res.statusCode).toBe(400);
       const body = JSON.parse(res.body) as { success: boolean; error: string };
       expect(body.success).toBe(false);
       expect(body.error).toContain("active session");
+    });
+
+    it("rejects check-in without camera/GPS evidence and does not create attendance", async () => {
+      const res = await app.inject({ method: "POST", url: "/attendance/check-in", headers: { authorization: `Bearer ${employeeToken}` }, payload: {} });
+      expect(res.statusCode).toBe(400);
+      expect(attendanceRepository.createSession).not.toHaveBeenCalled();
     });
 
     it("returns 403 when called by an ADMIN (M6 fix)", async () => {

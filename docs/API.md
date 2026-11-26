@@ -2,6 +2,12 @@
 
 This guide explains how to access and use the FieldTrack API documentation and authentication.
 
+Reviewed against the local source on 2026-11-24. Examples use the default API
+port 3000; when running the web app (also port 3000), set API `PORT=3001` and
+adjust API URLs/CORS accordingly. Use [API_REFERENCE.md](API_REFERENCE.md) for
+the current complete text contract and [FIELD_OPERATIONS.md](FIELD_OPERATIONS.md)
+for camera/payroll setup. Fixed timestamps below are illustrative, not replayable.
+
 ---
 
 ## Access Interactive Documentation
@@ -12,12 +18,12 @@ FieldTrack provides interactive API documentation powered by **Swagger UI** with
 
 **Local Development:**
 ```
-http://localhost:4000/docs
+http://localhost:3000/docs
 ```
 
 **Production:**
 ```
-https://api.fieldtrack.app/docs
+https://api.getfieldtrack.app/docs
 ```
 
 ### OpenAPI Specification
@@ -26,12 +32,12 @@ The raw OpenAPI 3.0 JSON specification is available at:
 
 **Local:**
 ```
-http://localhost:4000/openapi.json
+http://localhost:3000/openapi.json
 ```
 
 **Production:**
 ```
-https://api.fieldtrack.app/openapi.json
+https://api.getfieldtrack.app/openapi.json
 ```
 
 This can be imported into API clients like Postman, Insomnia, or used for code generation.
@@ -40,7 +46,11 @@ This can be imported into API clients like Postman, Insomnia, or used for code g
 
 ## Authentication
 
-All API endpoints (except `/health` and `/metrics`) require authentication.
+Business endpoints require authentication. `/`, `/health`, `/ready`,
+`/auth/login`, `/docs` and `/openapi.json` are public at the application layer.
+`/metrics` uses a separate scrape token, required in production; it is not a
+normal employee-JWT endpoint. Generated OpenAPI security defaults do not always
+capture these route exceptions or missing response schemas.
 
 You can authenticate with either:
 - `Authorization: Bearer <jwt>` (standard user auth)
@@ -82,19 +92,24 @@ Supported scopes:
 - `write:expenses`
 - `admin:all`
 
+API keys carry no employee identity, so they cannot start employee attendance,
+upload selfies or create employee expenses. Use an employee JWT with top-level
+`role`, `org_id`, `employee_id`; production verifies ES256/JWKS, issuer and audience.
+Expense review currently requires a real admin JWT reviewer UUID in practice.
+
 ### API Key Examples
 
 **cURL**
 
 ```bash
-curl -X GET "http://localhost:4000/admin/sessions?page=1&limit=20" \
+curl -X GET "http://localhost:3000/admin/sessions?page=1&limit=20" \
   -H "X-API-Key: ft_live_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 ```
 
 **fetch (Node/Browser)**
 
 ```javascript
-const response = await fetch("https://api.fieldtrack.app/admin/employees", {
+const response = await fetch("https://api.getfieldtrack.app/admin/employees", {
   method: "GET",
   headers: {
     "X-API-Key": "ft_live_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
@@ -125,7 +140,7 @@ All subsequent "Try it out" requests will automatically include your authenticat
 ### Health Check (No Auth)
 
 ```bash
-curl http://localhost:4000/health
+curl http://localhost:3000/health
 ```
 
 **Response:**
@@ -136,12 +151,20 @@ curl http://localhost:4000/health
 }
 ```
 
-### Check In (Requires Auth)
+### Check In (Employee camera + GPS required)
+
+1. `POST /attendance/selfie-challenge` with the employee bearer token.
+2. Take a fresh in-app camera JPEG and add the GPS/accuracy/IST-time footer plus
+   GPS EXIF. PUT the bytes to the returned `upload_url` as `image/jpeg`.
+3. Submit its `challenge_id` and the same GPS fix/timestamps below. Challenge
+   expires in 5 minutes; photo/GPS must be <=2 minutes old and accurate to <=100m.
+   The API rejects missing/mismatched GPS EXIF. It does not prove biometric liveness.
 
 ```bash
-curl -X POST http://localhost:4000/attendance/check-in \
+curl -X POST http://localhost:3000/attendance/check-in \
   -H "Authorization: Bearer <your-jwt-token>" \
-  -H "Content-Type: application/json"
+  -H "Content-Type: application/json" \
+  -d '{"challenge_id":"<challenge UUID>","latitude":19.076,"longitude":72.8777,"accuracy":10,"captured_at":"<current ISO timestamp>","location_at":"<GPS-fix ISO timestamp>"}'
 ```
 
 **Response:**
@@ -150,10 +173,13 @@ curl -X POST http://localhost:4000/attendance/check-in \
   "success": true,
   "data": {
     "id": "550e8400-e29b-41d4-a716-446655440000",
-    "user_id": "123e4567-e89b-12d3-a456-426614174000",
+    "employee_id": "123e4567-e89b-12d3-a456-426614174000",
     "organization_id": "789e0123-e89b-12d3-a456-426614174000",
-    "checked_in_at": "2026-03-10T15:30:00.000Z",
-    "status": "ACTIVE"
+    "checkin_at": "2026-11-24T09:00:00.000Z",
+    "checkout_at": null,
+    "start_latitude": 19.076,
+    "start_longitude": 72.8777,
+    "start_accuracy_m": 10
   }
 }
 ```
@@ -161,7 +187,7 @@ curl -X POST http://localhost:4000/attendance/check-in \
 ### Get My Sessions (Requires Auth, with Pagination)
 
 ```bash
-curl "http://localhost:4000/attendance/my-sessions?page=1&limit=20" \
+curl "http://localhost:3000/attendance/my-sessions?page=1&limit=20" \
   -H "Authorization: Bearer <your-jwt-token>"
 ```
 
@@ -172,11 +198,12 @@ curl "http://localhost:4000/attendance/my-sessions?page=1&limit=20" \
   "data": [
     {
       "id": "550e8400-e29b-41d4-a716-446655440000",
-      "checked_in_at": "2026-03-10T09:00:00.000Z",
-      "checked_out_at": "2026-03-10T17:00:00.000Z",
-      "status": "COMPLETED"
+      "checkin_at": "2026-11-24T09:00:00.000Z",
+      "checkout_at": "2026-11-24T17:00:00.000Z",
+      "activityStatus": "RECENT"
     }
-  ]
+  ],
+  "pagination": {"page":1,"limit":20,"total":1,"totalPages":1}
 }
 ```
 
@@ -202,7 +229,8 @@ GET /attendance/my-sessions?page=2&limit=50
 
 ### Success Response
 
-All successful API responses follow this envelope pattern:
+Business JSON responses follow this envelope pattern. Health/readiness/OpenAPI,
+SSE, CSV expense export and 204 deletions are deliberate exceptions:
 
 ```json
 {
@@ -246,6 +274,8 @@ Endpoints are grouped into the following categories:
 
 ### Attendance
 - `POST /attendance/check-in` — Start attendance session
+- `POST /attendance/selfie-challenge` — Prepare one-use camera upload
+- `GET /attendance/:sessionId/selfie` — Own/admin-private selfie view URL (60 seconds)
 - `POST /attendance/check-out` — End attendance session
 - `GET /attendance/my-sessions` — List your sessions
 - `POST /attendance/:sessionId/recalculate` — Recalculate session metrics
@@ -267,7 +297,27 @@ Endpoints are grouped into the following categories:
 ### Admin Operations
 - `GET /admin/expenses` — List all organization expenses
 - `PATCH /admin/expenses/:id` — Approve/reject expense
-- `GET /attendance/org-sessions` — List all organization sessions
+- `GET /admin/sessions` — List organization sessions
+- `GET /attendance/org-sessions` — Removed; returns 410
+
+### Field Locations and Pay
+- `GET /field/settings`, `GET /field/sites` — Company settings/preset sites
+- `POST /field/sites/:id/reach` — Confirm arrival using a fresh GPS fix
+- `POST /admin/field/settings`, `POST/PATCH /admin/field/sites[/UUID]` — Admin setup
+- `GET /admin/field/basic-pay`, `POST /admin/field/basic-pay/:employeeId` — Basic salary history/settings
+- `GET /admin/field/reports`, `GET /field/my-report` — Daily, weekly, monthly and custom-range reports
+- `GET /admin/field/reports/export` — JSON filename + CSV text
+- `GET /admin/field/payments/:employeeId/preview` — Outstanding pay for the selected dates and components
+- `GET /admin/field/payments/:employeeId` — Recorded payment history
+- `POST /admin/field/payments/:employeeId` — Record an external payment at the reviewed amount
+
+Company defaults: INR and IST (UTC+05:30). Warehouse rates/radii and employee
+basic pay are dashboard-configurable. Money is integer minor units. Monthly
+pay totals include basic pay for complete calendar months and visit earnings
+throughout the selected dates. Payment records store amounts already paid and
+prevent counting the same visits and basic salary months a second time.
+
+[Field tracking and payroll details](FIELD_OPERATIONS.md)
 
 ---
 
@@ -331,7 +381,7 @@ Store your token in an environment variable:
 ```bash
 export FIELDTRACK_TOKEN="your-jwt-token-here"
 
-curl -X POST http://localhost:4000/attendance/check-in \
+curl -X POST http://localhost:3000/attendance/check-out \
   -H "Authorization: Bearer $FIELDTRACK_TOKEN" \
   -H "Content-Type: application/json"
 ```
@@ -339,7 +389,7 @@ curl -X POST http://localhost:4000/attendance/check-in \
 ### Using HTTPie
 
 ```bash
-http POST http://localhost:4000/attendance/check-in \
+http POST http://localhost:3000/attendance/check-out \
   Authorization:"Bearer $FIELDTRACK_TOKEN"
 ```
 

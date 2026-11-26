@@ -10,7 +10,8 @@ import {
   ForbiddenError,
   requireEmployeeContext,
 } from "../../utils/errors.js";
-import type { AttendanceSession } from "./attendance.schema.js";
+import { cameraCheckInSchema, type AttendanceSession } from "./attendance.schema.js";
+import { attendanceSelfieService } from "./attendance-selfie.service.js";
 import type { EnrichedAttendanceSession } from "./attendance.repository.js";
 import { profileRepository } from "../profile/profile.repository.js";
 import { sseEventBus } from "../../utils/sse-emitter.js";
@@ -44,7 +45,9 @@ export const attendanceService = {
     // Update last_activity_at (fire-and-forget)
     profileRepository.updateLastActivity(request, employeeId).catch(() => {});
 
-    const session = await attendanceRepository.createSession(request, employeeId);
+    const camera = cameraCheckInSchema.parse(request.body);
+    await attendanceSelfieService.validate(request, camera);
+    const session = await attendanceRepository.createSession(request, employeeId, camera);
 
     // Keep snapshot table in sync — fire-and-forget so check-in latency is unaffected
     attendanceRepository

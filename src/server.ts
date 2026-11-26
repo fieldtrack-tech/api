@@ -2,6 +2,7 @@ import { initTelemetry } from "./tracing.js";
 import { env, getConfigHash, getEnv, assertEnv, logStartupConfig } from "./config/env.js";
 import { buildApp } from "./app.js";
 import { shouldStartWorkers, getExpectedWorkerCount } from "./workers/startup.js";
+import { registerFieldEvidenceRetention } from "./workers/field-evidence-retention.job.js";
 import { setBootstrapped } from "./routes/health.js";
 
 async function start(): Promise<void> {
@@ -19,6 +20,7 @@ async function start(): Promise<void> {
   const configHash = getConfigHash();
 
   const app = await buildApp();
+  if (env.APP_ENV !== "test" && env.NODE_ENV !== "test") registerFieldEvidenceRetention(app);
   app.log.info({ configHash, appEnv: env.APP_ENV }, "[BOOT] config loaded");
 
   // Phase 11: Graceful shutdown.

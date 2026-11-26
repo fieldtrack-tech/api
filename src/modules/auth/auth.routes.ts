@@ -1,7 +1,8 @@
 import type { FastifyInstance } from "fastify";
+import type { Session } from "@supabase/supabase-js";
 import { z } from "zod";
 import { authenticate } from "../../middleware/auth.js";
-import { supabaseAnonClient } from "../../config/supabase.js";
+import { createSupabaseAuthClient } from "../../config/supabase.js";
 import { fail, ok } from "../../utils/response.js";
 
 const authLoginBodySchema = z.object({
@@ -39,6 +40,18 @@ const authMeResponseSchema = z.object({
   }),
 });
 
+const refreshBody = z.object({ refresh_token: z.string().min(1).max(8192) });
+
+function sessionResponse(session: Session) {
+  return ok({
+    access_token: session.access_token,
+    refresh_token: session.refresh_token,
+    token_type: session.token_type,
+    expires_in: session.expires_in,
+    expires_at: session.expires_at ?? null,
+  });
+}
+
 /**
  * Auth routes — identity resolution from JWT.
  *
@@ -68,7 +81,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
           .send(fail("Validation failed: email and password are required", request.id, "VALIDATION_ERROR"));
       }
 
-      const { data, error } = await supabaseAnonClient.auth.signInWithPassword({
+      const { data, error } = await createSupabaseAuthClient().auth.signInWithPassword({
         email: parsed.data.email,
         password: parsed.data.password,
       });
@@ -79,17 +92,28 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
           .send(fail("Invalid email or password", request.id, "INVALID_CREDENTIALS"));
       }
 
-      return reply.status(200).send(
-        ok({
-          access_token: data.session.access_token,
-          refresh_token: data.session.refresh_token,
-          token_type: data.session.token_type,
-          expires_in: data.session.expires_in,
-          expires_at: data.session.expires_at ?? null,
-        }),
-      );
+      return reply.header("Cache-Control", "no-store").status(200).send(sessionResponse(data.session));
     },
   );
+
+  app.post("/auth/refresh", {
+    schema: {
+      tags: ["auth"],
+      body: refreshBody,
+      response: { 200: authLoginResponseSchema, 401: authErrorResponseSchema, 503: authErrorResponseSchema },
+    },
+  }, async (request, reply) => {
+    const { refresh_token } = refreshBody.parse(request.body);
+    const { data, error } = await createSupabaseAuthClient().auth.refreshSession({ refresh_token });
+    reply.header("Cache-Control", "no-store");
+    if (error && (!error.status || error.status >= 500 || error.status === 429)) {
+      return reply.status(503).send(fail("Session refresh temporarily unavailable", request.id, "SERVICE_UNAVAILABLE"));
+    }
+    if (error || !data.session) {
+      return reply.status(401).send(fail("Session has expired", request.id, "SESSION_EXPIRED"));
+    }
+    return reply.send(sessionResponse(data.session));
+  });
 
   app.get(
     "/auth/me",

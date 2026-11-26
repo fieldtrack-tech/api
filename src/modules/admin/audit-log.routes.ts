@@ -42,6 +42,7 @@ export async function auditLogRoutes(app: FastifyInstance): Promise<void> {
         let query = supabase
           .from("admin_audit_log")
           .select("id, event, actor_id, organization_id, resource_type, resource_id, payload, created_at")
+          .eq("organization_id", request.organizationId)
           .order("created_at", { ascending: false })
           .limit(limit);
 

@@ -89,7 +89,7 @@ export class EmployeeAlreadyCheckedIn extends BadRequestError {
 
 export class SessionAlreadyClosed extends BadRequestError {
     constructor() {
-        super("Cannot check out: no active session found. Check in first.");
+        super("Cannot check out: no active session found. Check in first.", "NO_ACTIVE_SHIFT");
         this.name = "SessionAlreadyClosed";
     }
 }

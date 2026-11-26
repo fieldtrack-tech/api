@@ -35,6 +35,8 @@ const locationListResponseSchema = z.object({
 const batchLocationResponseSchema = z.object({
     success: z.literal(true),
     inserted: z.number(),
+    discarded_recorded_at: z.array(z.string()).optional(),
+    session_closed: z.literal(true).optional(),
 });
 
 /**

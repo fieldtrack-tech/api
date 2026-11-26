@@ -4,6 +4,13 @@ import type { TenantContext } from "../../utils/tenant.js";
 import { applyPagination } from "../../utils/pagination.js";
 import type { FastifyRequest } from "fastify";
 import type { LocationRecord, CreateLocationBody } from "./locations.schema.js";
+import { BadRequestError, ForbiddenError } from "../../utils/errors.js";
+
+type LocationIngestResult = {
+    inserted: LocationRecord[];
+    discarded_recorded_at: string[];
+    closed: boolean;
+};
 
 /**
  * Locations repository — Supabase queries for gps_locations.
@@ -17,62 +24,24 @@ import type { LocationRecord, CreateLocationBody } from "./locations.schema.js";
  * without joins to attendance_sessions.
  */
 export const locationsRepository = {
-    async createLocation(
-        request: FastifyRequest,
-        employeeId: string,
-        sessionId: string,
-        data: CreateLocationBody,
-    ): Promise<LocationRecord> {
-        const { data: record, error } = await supabase
-            .from("gps_locations")
-            .upsert(
-                {
-                    organization_id: request.organizationId,
-                    session_id: sessionId,
-                    employee_id: employeeId,
-                    latitude: data.latitude,
-                    longitude: data.longitude,
-                    accuracy: data.accuracy,
-                    recorded_at: data.recorded_at,
-                    ...(data.sequence_number !== undefined && { sequence_number: data.sequence_number }),
-                },
-                { onConflict: "session_id, recorded_at", ignoreDuplicates: true },
-            )
-            .select("id, organization_id, session_id, employee_id, latitude, longitude, accuracy, recorded_at, sequence_number, is_duplicate")
-            .single();
-
-        if (error) {
-            throw new Error(`Failed to insert location: ${error.message}`);
-        }
-        return record as LocationRecord;
-    },
-
-    async createLocationBatch(
+    async ingestLocationPoints(
         request: FastifyRequest,
         employeeId: string,
         sessionId: string,
         points: Omit<CreateLocationBody, "session_id">[],
-    ): Promise<number> {
-        const rows = points.map((p) => ({
-            organization_id: request.organizationId,
-            session_id: sessionId,
-            employee_id: employeeId,
-            latitude: p.latitude,
-            longitude: p.longitude,
-            accuracy: p.accuracy,
-            recorded_at: p.recorded_at,
-            ...(p.sequence_number !== undefined && { sequence_number: p.sequence_number }),
-        }));
-
-        const { data, error } = await supabase
-            .from("gps_locations")
-            .upsert(rows, { onConflict: "session_id, recorded_at", ignoreDuplicates: true })
-            .select("id");
-
-        if (error) {
-            throw new Error(`Failed to bulk insert locations: ${error.message}`);
-        }
-        return data?.length ?? 0;
+        allowClosed: boolean,
+    ): Promise<LocationIngestResult> {
+        const { data, error } = await supabase.rpc("ingest_field_gps", {
+            p_org: request.organizationId,
+            p_employee: employeeId,
+            p_session: sessionId,
+            p_points: points,
+            p_allow_closed: allowClosed,
+        });
+        if (error?.code === "42501") throw new ForbiddenError("Employee is inactive.", "EMPLOYEE_INACTIVE");
+        if (error?.code === "P0002") throw new BadRequestError(error.message, "LOCATION_SESSION_EXPIRED");
+        if (error) throw new Error(`Failed to save locations: ${error.message}`);
+        return data as LocationIngestResult;
     },
 
     async findLocationsBySession(
@@ -89,12 +58,13 @@ export const locationsRepository = {
             query = query.eq("employee_id", employeeId) as typeof query;
         }
 
-        const { data, error } = await query;
-
-        if (error) {
-            throw new Error(`Failed to fetch location history: ${error.message}`);
+        const rows: LocationRecord[] = [];
+        for (;;) {
+            const { data, error } = await query.range(rows.length, rows.length + 499);
+            if (error) throw new Error(`Failed to fetch location history: ${error.message}`);
+            rows.push(...(data ?? []));
+            if ((data?.length ?? 0) < 500) return rows;
         }
-        return (data ?? []) as LocationRecord[];
     },
 
     async findPointsForDistancePaginated(

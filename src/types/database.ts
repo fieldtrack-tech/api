@@ -1,3 +1,5 @@
+import type { FieldOperationTables } from "../modules/field-operations/field-operations.schema.js";
+
 export type Json =
   | string
   | number
@@ -83,6 +85,11 @@ export type Database = {
       }
       attendance_sessions: {
         Row: {
+          start_latitude: number | null
+          start_longitude: number | null
+          start_accuracy_m: number | null
+          selfie_path: string | null
+          selfie_captured_at: string | null
           checkin_at: string
           checkout_at: string | null
           created_at: string
@@ -96,6 +103,11 @@ export type Database = {
         }
         Insert: {
           checkin_at?: string
+          start_latitude?: number | null
+          start_longitude?: number | null
+          start_accuracy_m?: number | null
+          selfie_path?: string | null
+          selfie_captured_at?: string | null
           checkout_at?: string | null
           created_at?: string
           distance_recalculation_status?: Database["public"]["Enums"]["distance_job_status"]
@@ -108,6 +120,11 @@ export type Database = {
         }
         Update: {
           checkin_at?: string
+          start_latitude?: number | null
+          start_longitude?: number | null
+          start_accuracy_m?: number | null
+          selfie_path?: string | null
+          selfie_captured_at?: string | null
           checkout_at?: string | null
           created_at?: string
           distance_recalculation_status?: Database["public"]["Enums"]["distance_job_status"]
@@ -958,7 +975,7 @@ export type Database = {
           },
         ]
       }
-    }
+    } & FieldOperationTables
     Views: {
       [_ in never]: never
     }

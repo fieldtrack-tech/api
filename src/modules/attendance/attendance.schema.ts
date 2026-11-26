@@ -5,6 +5,16 @@ import type { AttendanceSession } from "../../types/db.js";
 
 export type { AttendanceSession };
 
+export const cameraCheckInSchema = z.object({
+    challenge_id: z.string().uuid(),
+    latitude: z.number().min(-90).max(90),
+    longitude: z.number().min(-180).max(180),
+    accuracy: z.number().min(0).max(100),
+    captured_at: z.string().datetime(),
+    location_at: z.string().datetime(),
+});
+export type CameraCheckIn = z.infer<typeof cameraCheckInSchema>;
+
 // ─── Request Schemas ─────────────────────────────────────
 
 export const paginationSchema = z.object({

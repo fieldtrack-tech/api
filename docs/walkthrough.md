@@ -1,5 +1,41 @@
 # FieldTrack 2.0 Backend — Walkthrough
 
+## Current source audit — 2026-11-24
+
+This is a historical phase ledger, not a deployment runbook. The phase sections
+below intentionally preserve earlier designs/results: old routes, columns,
+client roles, CORS names, test counts and Docker/worker examples are superseded.
+Do not execute its historical linked reset, rollback or schema examples against
+the company database. Use [API_REFERENCE.md](API_REFERENCE.md),
+[DEPLOYMENT.md](DEPLOYMENT.md), [env-contract.md](env-contract.md) and
+[FIELD_OPERATIONS.md](FIELD_OPERATIONS.md) for current contracts.
+
+Current differences from the historical sections:
+
+- ES256/JWKS verifies top-level `role`, `org_id`, `employee_id`; `sub` is the auth
+  user, not necessarily employee ID. Normal repositories use the service client
+  with explicit tenant filters; anon is used for password login.
+- Camera check-in requires a one-use challenge, JPEG/GPS EXIF and fresh photo/GPS
+  times. Supported clients embed a visible GPS/accuracy/IST footer. Org sessions
+  moved to `/admin/sessions`; `/attendance/org-sessions` returns 410.
+- INR / IST company settings, preset sites, distant-origin repeat visits,
+  effective-month salaries and weekly/monthly earnings are implemented locally.
+  Reports are computed live, not finalized payroll. Closed-session offline GPS
+  and retrospective visit reconciliation are not supported.
+- Current queues are Redis/BullMQ, but colon-based analytics/snapshot/DLQ job IDs
+  need correction. Snapshot/RPC schema and grant parity need separate testing.
+- Docker ships a pinned distroless Node 24 nonroot runtime; gzip is in nginx,
+  not a registered Fastify compression plugin. CORS uses `CORS_ORIGIN`.
+- Deploy jobs are `validate`, `build-push`, `deploy`, `rollback`; neither fixed
+  sub-10-second rollback nor a blocking dependency scan is guaranteed.
+- API health is bootstrap liveness; readiness is JSON. Monitoring configuration
+  does not currently provision Tempo, a Grafana proxy or valid readiness scraping.
+- Local audit checks: 552 API tests, web build and 11 selfie tests passed; Android
+  compiles but its unit task has no test sources. No live migration/deploy/device
+  verification was performed. Historical green checks are not current guarantees.
+
+## Historical phase records (superseded implementation details)
+
 ## Phase 0 — Project Scaffolding
 
 Fastify + TypeScript backend scaffold with JWT, structured logging, modular routing, Docker, and domain placeholders.
@@ -14,10 +50,10 @@ Fastify + TypeScript backend scaffold with JWT, structured logging, modular rout
 
 | File | Action | Purpose |
 |------|--------|---------|
-| [jwt.ts](file:///d:/Codebase/api/src/types/jwt.ts) | **NEW** | Zod v4 schema for JWT payload (`sub`, `role`, `organization_id`) |
-| [global.d.ts](file:///d:/Codebase/api/src/types/global.d.ts) | **MODIFIED** | Wires `JwtPayload` into Fastify types + adds `organizationId` to request |
-| [auth.ts](file:///d:/Codebase/api/src/middleware/auth.ts) | **MODIFIED** | JWT verify → Zod validate → attach tenant context (or 401) |
-| [tenant.ts](file:///d:/Codebase/api/src/utils/tenant.ts) | **NEW** | `enforceTenant()` — scopes any query to `request.organizationId` |
+| [jwt.ts](../src/types/jwt.ts) | **NEW** | Zod v4 schema for JWT payload (`sub`, `role`, `organization_id`) |
+| [global.d.ts](../src/types/global.d.ts) | **MODIFIED** | Wires `JwtPayload` into Fastify types + adds `organizationId` to request |
+| [auth.ts](../src/middleware/auth.ts) | **MODIFIED** | JWT verify → Zod validate → attach tenant context (or 401) |
+| [tenant.ts](../src/utils/tenant.ts) | **NEW** | `enforceTenant()` — scopes any query to `request.organizationId` |
 
 ### How Tenant Enforcement Works
 
@@ -71,14 +107,14 @@ flowchart LR
 
 | File | Layer | Purpose |
 |------|-------|---------|
-| [attendance.schema.ts](file:///d:/Codebase/api/src/modules/attendance/attendance.schema.ts) | Types | DB row type, Zod pagination schema, response interfaces |
-| [attendance.repository.ts](file:///d:/Codebase/api/src/modules/attendance/attendance.repository.ts) | Repository | Supabase queries — all scoped via `enforceTenant()` |
-| [attendance.service.ts](file:///d:/Codebase/api/src/modules/attendance/attendance.service.ts) | Service | Business rules: no duplicate check-in, no check-out without open session |
-| [attendance.controller.ts](file:///d:/Codebase/api/src/modules/attendance/attendance.controller.ts) | Controller | Extract request data, call service, return `{ success, data }` |
-| [attendance.routes.ts](file:///d:/Codebase/api/src/modules/attendance/attendance.routes.ts) | Routes | 4 endpoints with auth middleware, ADMIN guard on org-sessions |
-| [supabase.ts](file:///d:/Codebase/api/src/config/supabase.ts) | Config | Supabase client singleton (service role key) |
-| [role-guard.ts](file:///d:/Codebase/api/src/middleware/role-guard.ts) | Middleware | Reusable `requireRole()` factory — 403 on role mismatch |
-| [errors.ts](file:///d:/Codebase/api/src/utils/errors.ts) | Utils | Added `ForbiddenError` (403) |
+| [attendance.schema.ts](../src/modules/attendance/attendance.schema.ts) | Types | DB row type, Zod pagination schema, response interfaces |
+| [attendance.repository.ts](../src/modules/attendance/attendance.repository.ts) | Repository | Supabase queries — all scoped via `enforceTenant()` |
+| [attendance.service.ts](../src/modules/attendance/attendance.service.ts) | Service | Business rules: no duplicate check-in, no check-out without open session |
+| [attendance.controller.ts](../src/modules/attendance/attendance.controller.ts) | Controller | Extract request data, call service, return `{ success, data }` |
+| [attendance.routes.ts](../src/modules/attendance/attendance.routes.ts) | Routes | 4 endpoints with auth middleware, ADMIN guard on org-sessions |
+| [supabase.ts](../src/config/supabase.ts) | Config | Supabase client singleton (service role key) |
+| [role-guard.ts](../src/middleware/role-guard.ts) | Middleware | Reusable `requireRole()` factory — 403 on role mismatch |
+| [errors.ts](../src/utils/errors.ts) | Utils | Added `ForbiddenError` (403) |
 
 ### Endpoints
 
@@ -132,11 +168,11 @@ curl "http://localhost:3000/attendance/org-sessions?page=1&limit=20" \
 
 | File | Layer | Purpose |
 |------|-------|---------|
-| [locations.schema.ts](file:///d:/Codebase/api/src/modules/locations/locations.schema.ts) | Types | DB row type, Zod schema (`latitude`, `longitude`, `accuracy`, `recorded_at`), response interfaces |
-| [locations.repository.ts](file:///d:/Codebase/api/src/modules/locations/locations.repository.ts) | Repository | Supabase `createLocation` and `findLocationsBySession`, scoped via `enforceTenant()` |
-| [locations.service.ts](file:///d:/Codebase/api/src/modules/locations/locations.service.ts) | Service | Business rules: verify open attendance session before insertion |
-| [locations.controller.ts](file:///d:/Codebase/api/src/modules/locations/locations.controller.ts) | Controller | Extract request data, Zod payload validation, delegate to service, format responses |
-| [locations.routes.ts](file:///d:/Codebase/api/src/modules/locations/locations.routes.ts) | Routes | 2 endpoints, both restricted to `EMPLOYEE` via role guard |
+| [locations.schema.ts](../src/modules/locations/locations.schema.ts) | Types | DB row type, Zod schema (`latitude`, `longitude`, `accuracy`, `recorded_at`), response interfaces |
+| [locations.repository.ts](../src/modules/locations/locations.repository.ts) | Repository | Supabase `createLocation` and `findLocationsBySession`, scoped via `enforceTenant()` |
+| [locations.service.ts](../src/modules/locations/locations.service.ts) | Service | Business rules: verify open attendance session before insertion |
+| [locations.controller.ts](../src/modules/locations/locations.controller.ts) | Controller | Extract request data, Zod payload validation, delegate to service, format responses |
+| [locations.routes.ts](../src/modules/locations/locations.routes.ts) | Routes | 2 endpoints, both restricted to `EMPLOYEE` via role guard |
 
 ### Endpoints
 

@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { authenticate } from "../../middleware/auth.js";
+import { authenticate, requireJwtAuth } from "../../middleware/auth.js";
 import { requireRole, requireEmployeeHook } from "../../middleware/role-guard.js";
 import { expensesController } from "./expenses.controller.js";
 import { expensesRepository } from "./expenses.repository.js";
@@ -108,7 +108,7 @@ export async function expensesRoutes(app: FastifyInstance): Promise<void> {
     {
       schema: { tags: ["admin"], body: updateExpenseStatusBodySchema },
       // preValidation ensures auth/role fires before body validation
-      preValidation: [authenticate, requireRole("ADMIN")],
+      preValidation: [authenticate, requireJwtAuth, requireRole("ADMIN")],
     },
     expensesController.updateStatus,
   );

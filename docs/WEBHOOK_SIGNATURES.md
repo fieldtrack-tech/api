@@ -2,6 +2,9 @@
 
 Every outbound webhook request from FieldTrack includes security headers that allow receivers to verify authenticity and reject replayed requests.
 
+Source audit: 2026-11-24. Headers describe successfully dispatched requests,
+not a guarantee that queueing, DB updates or receiver delivery always succeeds.
+
 ---
 
 ## Headers
@@ -13,7 +16,7 @@ Every outbound webhook request from FieldTrack includes security headers that al
 | `X-FieldTrack-Timestamp` | `1711618200` | Unix timestamp **in seconds** at delivery time |
 | `X-Webhook-Timestamp` | `1711618200` | Compatibility alias of `X-FieldTrack-Timestamp` |
 | `X-FieldTrack-Event` | `employee.checked_in` | Logical event type for routing |
-| `X-FieldTrack-Delivery-Id` | `1b2f...-uuid` | Unique delivery attempt id for idempotency / replay dedupe |
+| `X-FieldTrack-Delivery-Id` | `1b2f...-uuid` | Delivery-row ID, reused across retries for processing dedupe |
 
 ---
 
@@ -47,7 +50,9 @@ Including the timestamp in the signing input means the same payload signed at a 
 4. Compute `expected = "sha256=" + hex(HMAC-SHA256(secret, signing_body))`
 5. Compare `expected` to `X-FieldTrack-Signature` using a **timing-safe** equality function.
 6. Reject with HTTP 401 if signatures do not match.
-7. Optional replay guard: store `X-FieldTrack-Delivery-Id` for 24 h and reject duplicates.
+7. Deduplicate processing using `X-FieldTrack-Delivery-Id`: retries use the same
+   delivery-row ID, not a new attempt ID. Return a successful acknowledgement
+   for an already-processed valid delivery rather than causing another retry.
 
 > ⚠ **Never** use regular string equality (`==`) to compare signatures — it is vulnerable to timing attacks. Always use `hmac.compare_digest` (Python) or `crypto.timingSafeEqual` (Node.js).
 
@@ -67,10 +72,11 @@ function verifyFieldTrackWebhook(
   receivedSignature: string,
   receivedTimestamp: string,
 ): boolean {
-  // 1. Validate timestamp within tolerance window
-  const ts  = parseInt(receivedTimestamp, 10);
+  // 1. Require the exact decimal timestamp string before tolerance checks
+  if (!/^\d+$/.test(receivedTimestamp)) return false;
+  const ts  = Number(receivedTimestamp);
   const now = Math.floor(Date.now() / 1000);
-  if (isNaN(ts) || Math.abs(now - ts) > TOLERANCE_SECONDS) {
+  if (!Number.isSafeInteger(ts) || Math.abs(now - ts) > TOLERANCE_SECONDS) {
     return false; // stale or malformed timestamp
   }
 
@@ -189,8 +195,14 @@ def receive_webhook():
 
 ## Rotating secrets
 
+The current registration/update schema does not expose a secret-rotation field
+and the web dashboard has no rotate-secret action. The following is a proposed
+receiver transition procedure, not an implemented dashboard workflow:
+
 1. Generate a new secret in the FieldTrack webhooks dashboard.
 2. Update your receiver to accept **both** the old and new secret during a transition window (check both; accept if either matches).
 3. Once all in-flight requests have been delivered, remove the old secret check.
 
-FieldTrack re-signs all new deliveries with the new secret immediately upon rotation; retries of existing deliveries use the secret active at the time of the original enqueue.
+Queued requests/retries carry the secret captured at enqueue. Do not assume a
+database secret edit changes in-flight jobs. The secret travels through Redis;
+the checked-in private bridge uses `redis://`, not guaranteed TLS.

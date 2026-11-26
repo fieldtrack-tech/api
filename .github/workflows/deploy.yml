@@ -111,6 +111,12 @@ jobs:
       - name: TypeScript check
         run: npm run typecheck
 
+      - name: Audit runtime dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Verify forward migrations
+        run: node scripts/test-migration-replay.mjs
+
       - name: Fastify bootstrap sanity check
         run: npm run ci:bootstrap
 
